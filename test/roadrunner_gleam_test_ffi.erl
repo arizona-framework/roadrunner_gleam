@@ -1,5 +1,6 @@
 -module(roadrunner_gleam_test_ffi).
 -export([request/4, silence_logger/0, write_cert/1, tls_get/1, alpn/1]).
+-export([ws_connect/2, ws_send/3, ws_recv/1, ws_close/1]).
 
 %% A test certificate chain and key written as PEM files under `Dir`.
 write_cert(Dir) ->
@@ -58,3 +59,79 @@ request(Method, Url, Headers, Body) ->
     {ok, {{_, Status, _}, RespHeaders, RespBody}} =
         httpc:request(Method, Request, [], [{body_format, binary}]),
     {Status, [{list_to_binary(N), list_to_binary(V)} || {N, V} <- RespHeaders], RespBody}.
+
+%% A minimal WebSocket client over a passive socket, enough for small
+%% frames: connect returns the socket and the 101 response headers.
+ws_connect(Port, Path) ->
+    {ok, Socket} = gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}]),
+    ok = gen_tcp:send(Socket, [
+        ~"GET ", Path, ~" HTTP/1.1\r\n",
+        ~"host: 127.0.0.1\r\n",
+        ~"upgrade: websocket\r\n",
+        ~"connection: Upgrade\r\n",
+        ~"sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        ~"sec-websocket-version: 13\r\n\r\n"
+    ]),
+    {ok, Head} = recv_head(Socket, <<>>),
+    [StatusLine | Lines] = binary:split(Head, ~"\r\n", [global, trim_all]),
+    <<"HTTP/1.1 101", _/binary>> = StatusLine,
+    Headers = [
+        {roadrunner_bin:ascii_lowercase(Name), Value}
+     || Line <- Lines, [Name, Value] <- [binary:split(Line, ~": ")]
+    ],
+    {Socket, Headers}.
+
+recv_head(Socket, Acc) ->
+    case binary:split(Acc, ~"\r\n\r\n") of
+        [Head, <<>>] ->
+            {ok, Head};
+        [_Head, _Rest] ->
+            error(frames_after_handshake);
+        [_] ->
+            {ok, Data} = gen_tcp:recv(Socket, 0, 5000),
+            recv_head(Socket, <<Acc/binary, Data/binary>>)
+    end.
+
+%% Send one masked frame with a payload under 126 bytes.
+ws_send(Socket, Opcode, Payload) ->
+    Mask = <<1, 2, 3, 4>>,
+    Size = byte_size(Payload),
+    true = Size < 126,
+    Masked = mask(Payload, Mask, <<>>),
+    ok = gen_tcp:send(Socket, <<1:1, 0:3, (opcode(Opcode)):4, 1:1, Size:7, Mask/binary, Masked/binary>>),
+    nil.
+
+mask(<<Byte, Rest/binary>>, <<M, _/binary>> = Mask, Acc) ->
+    <<_, MaskRest/binary>> = Mask,
+    mask(Rest, <<MaskRest/binary, M>>, <<Acc/binary, (Byte bxor M)>>);
+mask(<<>>, _Mask, Acc) ->
+    Acc.
+
+opcode(text) -> 1;
+opcode(binary) -> 2;
+opcode(close) -> 8;
+opcode(ping) -> 9;
+opcode(pong) -> 10.
+
+%% Receive one unmasked server frame with a payload under 126 bytes, as
+%% `{Opcode, Payload}`.
+ws_recv(Socket) ->
+    {ok, <<_:4, Op:4, 0:1, Size:7>>} = gen_tcp:recv(Socket, 2, 5000),
+    true = Size < 126,
+    {opcode_name(Op), recv_payload(Socket, Size)}.
+
+recv_payload(_Socket, 0) ->
+    <<>>;
+recv_payload(Socket, Size) ->
+    {ok, Payload} = gen_tcp:recv(Socket, Size, 5000),
+    Payload.
+
+opcode_name(1) -> text;
+opcode_name(2) -> binary;
+opcode_name(8) -> close;
+opcode_name(9) -> ping;
+opcode_name(10) -> pong.
+
+ws_close(Socket) ->
+    ok = gen_tcp:close(Socket),
+    nil.

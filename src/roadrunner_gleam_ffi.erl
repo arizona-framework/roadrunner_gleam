@@ -21,7 +21,7 @@
 ]).
 
 %% Response
--export([send_chunk/2, file_size/1]).
+-export([send_chunk/2, file_size/1, identity/1]).
 
 %% --------------------------------------------------------------------
 %% roadrunner callback
@@ -42,7 +42,9 @@ to_response(Status, Headers, {chunked, Stream}) ->
     {stream, Status, Headers, fun(Send) ->
         _ = Stream(Send),
         Send(~"", fin)
-    end}.
+    end};
+to_response(_Status, Headers, {web_socket, {builder, OnInit, Handler, OnClose, Options}}) ->
+    {websocket, roadrunner_gleam_ws, {OnInit, Handler, OnClose}, Options#{headers => Headers}}.
 
 %% roadrunner sends buffered and sendfile responses as given, so the
 %% content-length is added here unless the handler set one. Responses
@@ -147,3 +149,6 @@ file_size(Path) ->
         {ok, #file_info{type = regular, size = Size}} -> {ok, Size};
         _ -> {error, nil}
     end.
+
+identity(Term) ->
+    Term.

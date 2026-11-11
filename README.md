@@ -82,6 +82,8 @@ Any other Roadrunner listener option, such as `max_content_length` or
 - Requests are read in place, at the same cost as an Erlang handler
 - Responses: complete, chunked and files sent by the kernel
 - `content-length` set for you on complete and file responses
+- WebSocket sessions over HTTP/1.1, with typed state and a `Subject` other
+  processes can push through
 - `request.to_http` and `response.from_http` for libraries built on
   `gleam_http`
 - Start, stop and drain listeners, or run them under a `gleam/otp`
