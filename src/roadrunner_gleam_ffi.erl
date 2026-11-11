@@ -17,6 +17,8 @@
 %% Request
 -export([
     header/2,
+    header_bits/2,
+    headers/1,
     body/1,
     read_body/1,
     read_chunk/2,
@@ -165,8 +167,29 @@ tuple2(A, B) ->
 %% Request
 %% --------------------------------------------------------------------
 
+%% HTTP lets header values hold bytes 0x80-0xFF (obs-text, RFC 9110
+%% §5.5), and Gleam `String`s must be UTF-8, so values are checked when
+%% read: nothing is scanned on a request that never reads them.
 header(Req, Name) ->
+    case roadrunner_req:header(Name, Req) of
+        undefined -> {error, nil};
+        Value -> utf8_result(Value)
+    end.
+
+header_bits(Req, Name) ->
     to_result(roadrunner_req:header(Name, Req)).
+
+headers(Req) ->
+    [Header || {_Name, Value} = Header <- roadrunner_req:headers(Req), is_utf8(Value)].
+
+utf8_result(Value) ->
+    case is_utf8(Value) of
+        true -> {ok, Value};
+        false -> {error, nil}
+    end.
+
+is_utf8(Binary) ->
+    is_binary(unicode:characters_to_binary(Binary)).
 
 body(Req) ->
     iolist_to_binary(roadrunner_req:body(Req)).
@@ -189,12 +212,14 @@ read_error(content_length_too_large) ->
 read_error(Reason) ->
     {read_failed, iolist_to_binary(io_lib:format("~0tp", [Reason]))}.
 
-%% A key with no `=` parses to `true`; Gleam gets an empty value.
+%% A key with no `=` parses to `true`; Gleam gets an empty value. Keys
+%% and values are percent-decoded to raw bytes, so they are checked too.
 query_params(Req) ->
-    [
-        {Key, query_value(Value)}
-     || {Key, Value} <- roadrunner_req:parse_qs(Req)
-    ].
+    Params = [{Key, query_value(Value)} || {Key, Value} <- roadrunner_req:parse_qs(Req)],
+    case lists:all(fun({Key, Value}) -> is_utf8(Key) andalso is_utf8(Value) end, Params) of
+        true -> {ok, Params};
+        false -> {error, nil}
+    end.
 
 query_value(true) -> ~"";
 query_value(Value) -> Value.
