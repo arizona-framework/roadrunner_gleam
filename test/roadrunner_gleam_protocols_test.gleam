@@ -1,0 +1,159 @@
+//// The same handlers over HTTP/2 and HTTP/3, through curl.
+
+import gleam/bit_array
+import gleam/bytes_tree
+import gleam/erlang/process
+import gleam/http/response as http_response
+import gleam/int
+import gleam/list
+import gleam/otp/actor
+import gleam/string
+import roadrunner_gleam
+import roadrunner_gleam/push
+import roadrunner_gleam/request.{type Request}
+import roadrunner_gleam/response.{type Response}
+
+// --- helpers --------------------------------------------------------
+
+type Protocol {
+  H2
+  H3
+}
+
+fn handler(request: Request) -> Response {
+  case request.path_segments(request) {
+    ["version"] -> response.text(string.inspect(request.http_version(request)))
+    ["chunked"] ->
+      response.new(200)
+      |> http_response.set_body(
+        response.Chunked(fn(sender) {
+          let _ = response.send_chunk(sender, bytes_tree.from_string("one "))
+          let _ = response.send_chunk(sender, bytes_tree.from_string("two"))
+          Nil
+        }),
+      )
+    ["push"] ->
+      // `on_init` sends the response one message, which the handler answers
+      // and stops on.
+      push.new(
+        on_init: fn(subject) {
+          process.send(subject, Nil)
+          push.continue(Nil) |> push.send(bytes_tree.from_string("first "))
+        },
+        handler: fn(state, _) {
+          push.stop(state) |> push.send(bytes_tree.from_string("last"))
+        },
+      )
+      |> push.response(200)
+    ["pieces"] -> {
+      let assert Ok(pieces) = read_pieces(request, [])
+      response.text(string.join(pieces, "|"))
+    }
+    ["file"] -> {
+      let assert Ok(body) = response.file("gleam.toml")
+      response.new(200) |> http_response.set_body(body)
+    }
+    _ -> response.new(404)
+  }
+}
+
+fn read_pieces(
+  request: Request,
+  pieces: List(String),
+) -> Result(List(String), request.ReadError) {
+  case request.read_chunk(request, 4) {
+    Ok(request.More(data, next)) ->
+      read_pieces(next, [to_string(data), ..pieces])
+    Ok(request.Last(data, _)) -> Ok(list.reverse([to_string(data), ..pieces]))
+    Error(error) -> Error(error)
+  }
+}
+
+fn to_string(data: BitArray) -> String {
+  let assert Ok(text) = bit_array.to_string(data)
+  text
+}
+
+fn serve(name: String, test_body: fn(Int) -> a) -> a {
+  let #(certfile, keyfile) = write_cert("build/test_tls")
+  let port = free_port()
+  let assert Ok(actor.Started(data: listener, ..)) =
+    roadrunner_gleam.new(handler)
+    |> roadrunner_gleam.port(port)
+    |> roadrunner_gleam.bind("127.0.0.1")
+    |> roadrunner_gleam.name(name)
+    |> roadrunner_gleam.tls(certfile:, keyfile:)
+    |> roadrunner_gleam.http3
+    |> roadrunner_gleam.read_body_on_demand
+    |> roadrunner_gleam.start
+  let result = test_body(port)
+  roadrunner_gleam.stop(listener)
+  result
+}
+
+fn fetch(protocol: Protocol, port: Int, path: String, extra: List(String)) {
+  let flag = case protocol {
+    H2 -> "--http2"
+    H3 -> "--http3-only"
+  }
+  let url = "https://127.0.0.1:" <> int.to_string(port) <> path
+  to_string(curl(list.flatten([["-s", "-k", flag], extra, [url]])))
+}
+
+@external(erlang, "roadrunner_gleam_test_ffi", "curl")
+fn curl(args: List(String)) -> BitArray
+
+@external(erlang, "roadrunner_gleam_test_ffi", "free_port")
+fn free_port() -> Int
+
+@external(erlang, "roadrunner_gleam_test_ffi", "write_cert")
+fn write_cert(dir: String) -> #(String, String)
+
+fn each_protocol(name: String, check: fn(Protocol, Int) -> Nil) -> Nil {
+  use port <- serve(name)
+  check(H2, port)
+  check(H3, port)
+}
+
+// --- tests ----------------------------------------------------------
+
+pub fn version_test() {
+  use protocol, port <- each_protocol("rg_proto_version")
+  let expected = case protocol {
+    H2 -> "Http2"
+    H3 -> "Http3"
+  }
+  assert fetch(protocol, port, "/version", []) == expected
+}
+
+pub fn chunked_test() {
+  use protocol, port <- each_protocol("rg_proto_chunked")
+  assert fetch(protocol, port, "/chunked", []) == "one two"
+}
+
+pub fn push_test() {
+  use protocol, port <- each_protocol("rg_proto_push")
+  assert fetch(protocol, port, "/push", []) == "first last"
+}
+
+pub fn read_chunk_test() {
+  use protocol, port <- each_protocol("rg_proto_pieces")
+  assert fetch(protocol, port, "/pieces", ["--data-binary", "hello world"])
+    == "hell|o wo|rld"
+}
+
+pub fn file_test() {
+  use protocol, port <- each_protocol("rg_proto_file")
+  let assert Ok(contents) = read_file("gleam.toml")
+  assert fetch(protocol, port, "/file", []) == to_string(contents)
+}
+
+pub fn head_chunked_test() {
+  use protocol, port <- each_protocol("rg_proto_head")
+  let output = fetch(protocol, port, "/chunked", ["-I"])
+  assert string.starts_with(output, "HTTP/")
+  assert !string.contains(output, "one two")
+}
+
+@external(erlang, "file", "read_file")
+fn read_file(path: String) -> Result(BitArray, Nil)
