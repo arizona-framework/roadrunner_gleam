@@ -2,10 +2,12 @@
 
 import gleam/bytes_tree.{type BytesTree}
 import gleam/http/response as http_response
+import gleam/list
+import gleam/string
 import gleam/string_tree.{type StringTree}
 
 /// An HTTP response. Header names must be lowercase, as HTTP/2 and HTTP/3
-/// require.
+/// require; `set_header` and `prepend_header` lowercase them for you.
 pub type Response {
   Response(status: Int, headers: List(#(String, String)), body: Body)
 }
@@ -18,11 +20,13 @@ pub type Body {
   /// `length` bytes of a file, starting at `offset`, sent by the kernel
   /// without copying them into the BEAM. `content-length` is set to
   /// `length` unless the headers already have one. Set `content-type`
-  /// yourself.
+  /// yourself. A range that runs past the end of the file fails the
+  /// request with a `500`.
   File(path: String, offset: Int, length: Int)
   /// A body sent in parts. Roadrunner calls the function with a `Sender`;
   /// send each part with `send_chunk`. The body ends when the function
-  /// returns.
+  /// returns. A `HEAD` request gets the headers only, and the function is
+  /// not called.
   Chunked(fn(Sender) -> Nil)
   /// A WebSocket upgrade, made with `websocket.upgrade`.
   WebSocket(Upgrade)
@@ -44,8 +48,22 @@ pub fn new(status: Int) -> Response {
   Response(status:, headers: [], body: Bytes(bytes_tree.new()))
 }
 
-/// Add a header. The name must be lowercase.
+/// Set a header, replacing any with the same name. The name is lowercased,
+/// as HTTP/2 and HTTP/3 require.
 pub fn set_header(response: Response, name: String, value: String) -> Response {
+  let name = string.lowercase(name)
+  let headers = list.filter(response.headers, fn(header) { header.0 != name })
+  Response(..response, headers: [#(name, value), ..headers])
+}
+
+/// Add a header, keeping any with the same name, for headers that can
+/// repeat such as `set-cookie`. The name is lowercased.
+pub fn prepend_header(
+  response: Response,
+  name: String,
+  value: String,
+) -> Response {
+  let name = string.lowercase(name)
   Response(..response, headers: [#(name, value), ..response.headers])
 }
 
@@ -88,7 +106,9 @@ pub fn file(path: String) -> Result(Body, Nil) {
 fn file_size(path: String) -> Result(Int, Nil)
 
 /// Send one part of a `Chunked` body. Fails when the connection is gone,
-/// after which the function should return.
+/// after which the function should return. Call it only from the function
+/// roadrunner called: from another process it can wait forever on an
+/// HTTP/2 connection that went away.
 @external(erlang, "roadrunner_gleam_ffi", "send_chunk")
 pub fn send_chunk(sender: Sender, data: BytesTree) -> Result(Nil, Nil)
 

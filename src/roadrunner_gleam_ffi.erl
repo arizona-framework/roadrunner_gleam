@@ -38,12 +38,22 @@
 handle(Req) ->
     Handler = roadrunner_req:state(Req),
     {response, Status, Headers, Body} = Handler(Req),
-    {to_response(Status, Headers, Body), Req}.
+    {to_response(Status, Headers, Body, roadrunner_req:method(Req)), Req}.
+
+%% roadrunner strips the body of buffered and sendfile responses on HEAD
+%% but leaves stream and loop responses to the handler, so those get the
+%% headers only here (RFC 9110 §9.3.2).
+to_response(Status, Headers, {chunked, _Stream}, ~"HEAD") ->
+    {Status, Headers, ~""};
+to_response(Status, Headers, {push, _Builder}, ~"HEAD") ->
+    {Status, Headers, ~""};
+to_response(Status, Headers, Body, _Method) ->
+    to_response(Status, Headers, Body).
 
 to_response(Status, Headers, {bytes, Data}) ->
     {Status, with_length(Status, Headers, iolist_size(Data)), Data};
 to_response(Status, Headers, {file, Path, Offset, Length}) ->
-    {sendfile, Status, with_length(Status, Headers, Length), {Path, Offset, Length}};
+    file_response(Status, Headers, Path, Offset, Length);
 to_response(Status, Headers, {chunked, Stream}) ->
     {stream, Status, Headers, fun(Send) ->
         _ = Stream(Send),
@@ -83,6 +93,20 @@ push_message(Message, Push, #push{handler = Handler, state = State} = Loop) ->
         {stop, NewState} -> {stop, Loop#push{state = NewState}}
     end.
 
+%% A range past the end of the file would send a wrong content-length
+%% (and crash the HTTP/3 reader), so it fails the request instead. A
+%% zero length is an empty body: `file:sendfile/5` reads 0 as "to the
+%% end of the file".
+file_response(Status, Headers, _Path, _Offset, 0) ->
+    {Status, with_length(Status, Headers, 0), ~""};
+file_response(Status, Headers, Path, Offset, Length) ->
+    case file:read_file_info(Path) of
+        {ok, #file_info{size = Size}} when Offset + Length =< Size ->
+            {sendfile, Status, with_length(Status, Headers, Length), {Path, Offset, Length}};
+        _ ->
+            error({file_range_past_end, Path, Offset, Length})
+    end.
+
 %% roadrunner sends buffered and sendfile responses as given, so the
 %% content-length is added here unless the handler set one. Responses
 %% that must not carry a body never get one (RFC 9110 §8.6).
@@ -98,8 +122,14 @@ with_length(_Status, Headers, Length) ->
 %% Listener
 %% --------------------------------------------------------------------
 
+%% A listener whose `init` fails exits, and the link would take the
+%% caller with it; trap exits while starting so the caller gets the error.
+%% The start function consumes the `'EXIT'` message itself.
 start_link(Name, Opts) ->
-    case roadrunner_listener:start_link(Name, Opts) of
+    Trapping = process_flag(trap_exit, true),
+    Result = roadrunner_listener:start_link(Name, Opts),
+    _ = process_flag(trap_exit, Trapping),
+    case Result of
         {ok, Pid} -> {ok, Pid};
         {error, Reason} -> {error, iolist_to_binary(io_lib:format("~0tp", [Reason]))}
     end.
