@@ -26,7 +26,12 @@ pub type Body {
   Chunked(fn(Sender) -> Nil)
   /// A WebSocket upgrade, made with `websocket.upgrade`.
   WebSocket(Upgrade)
+  /// A body that stays open and pushes data, made with `push.response`.
+  Push(PushBody)
 }
+
+/// A pushing body, made with `push.response`.
+pub type PushBody
 
 /// A WebSocket session to upgrade to, made with `websocket.upgrade`.
 pub type Upgrade

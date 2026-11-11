@@ -1,6 +1,6 @@
 -module(roadrunner_gleam_test_ffi).
 -export([request/4, silence_logger/0, write_cert/1, tls_get/1, alpn/1]).
--export([ws_connect/2, ws_send/3, ws_recv/1, ws_close/1]).
+-export([ws_connect/2, ws_send/3, ws_recv/1, ws_close/1, open_get/2]).
 
 %% A test certificate chain and key written as PEM files under `Dir`.
 write_cert(Dir) ->
@@ -143,3 +143,11 @@ opcode_name(10) -> pong.
 ws_close(Socket) ->
     ok = gen_tcp:close(Socket),
     nil.
+
+%% Send a GET and wait for the response headers, leaving the response
+%% open: the socket is returned for the caller to close.
+open_get(Port, Path) ->
+    {ok, Socket} = gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}]),
+    ok = gen_tcp:send(Socket, [~"GET ", Path, ~" HTTP/1.1\r\nhost: 127.0.0.1\r\n\r\n"]),
+    {ok, <<"HTTP/1.1 200", _/binary>>} = gen_tcp:recv(Socket, 0, 5000),
+    Socket.

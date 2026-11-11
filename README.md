@@ -84,6 +84,8 @@ Any other Roadrunner listener option, such as `max_content_length` or
 - `content-length` set for you on complete and file responses
 - WebSocket sessions over HTTP/1.1, with typed state and a `Subject` other
   processes can push through
+- Responses that stay open and push data as messages arrive, such as
+  server-sent events, on HTTP/1.1, HTTP/2 and HTTP/3
 - `request.to_http` and `response.from_http` for libraries built on
   `gleam_http`
 - Start, stop and drain listeners, or run them under a `gleam/otp`

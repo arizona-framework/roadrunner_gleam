@@ -4,8 +4,12 @@
 
 -include_lib("kernel/include/file.hrl").
 
-%% roadrunner callback
--export([handle/1]).
+%% The state of a pushing response: the Gleam callbacks, the tag of its
+%% subject, and the Gleam state.
+-record(push, {handler, on_disconnect, tag, state}).
+
+%% roadrunner callbacks
+-export([handle/1, handle_info/3]).
 
 %% Listener
 -export([start_link/2, stop/1, drain/2, listener_port/1, parse_ip/1, routes/1, tuple2/2]).
@@ -21,7 +25,7 @@
 ]).
 
 %% Response
--export([send_chunk/2, file_size/1, identity/1]).
+-export([send_chunk/2, push/2, file_size/1, identity/1]).
 
 %% --------------------------------------------------------------------
 %% roadrunner callback
@@ -44,7 +48,38 @@ to_response(Status, Headers, {chunked, Stream}) ->
         Send(~"", fin)
     end};
 to_response(_Status, Headers, {web_socket, {builder, OnInit, Handler, OnClose, Options}}) ->
-    {websocket, roadrunner_gleam_ws, {OnInit, Handler, OnClose}, Options#{headers => Headers}}.
+    {websocket, roadrunner_gleam_ws, {OnInit, Handler, OnClose}, Options#{headers => Headers}};
+to_response(Status, Headers, {push, {builder, OnInit, Handler, OnDisconnect}}) ->
+    %% Made here, in the process that runs the loop, so the messages sent
+    %% to the subject reach `handle_info/3`.
+    Subject = 'gleam@erlang@process':new_subject(),
+    {subject, _Owner, Tag} = Subject,
+    {loop, Status, Headers, #push{
+        handler = Handler,
+        on_disconnect = OnDisconnect,
+        tag = Tag,
+        state = OnInit(Subject)
+    }}.
+
+%% Messages to a pushing response. Only messages sent to its subject reach
+%% Gleam; other messages are dropped.
+handle_info({roadrunner_disconnect, _Reason}, _Push, #push{} = Loop) ->
+    #push{on_disconnect = OnDisconnect, state = State} = Loop,
+    _ = OnDisconnect(State),
+    {stop, Loop};
+handle_info({roadrunner_drain, Deadline}, Push, #push{} = Loop) ->
+    Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
+    push_message({draining, Remaining}, Push, Loop);
+handle_info({Tag, Message}, Push, #push{tag = Tag} = Loop) ->
+    push_message({custom, Message}, Push, Loop);
+handle_info(_Info, _Push, Loop) ->
+    {ok, Loop}.
+
+push_message(Message, Push, #push{handler = Handler, state = State} = Loop) ->
+    case Handler(State, Message, Push) of
+        {continue, NewState} -> {ok, Loop#push{state = NewState}};
+        {stop, NewState} -> {stop, Loop#push{state = NewState}}
+    end.
 
 %% roadrunner sends buffered and sendfile responses as given, so the
 %% content-length is added here unless the handler set one. Responses
@@ -140,6 +175,12 @@ to_result(Value) -> {ok, Value}.
 
 send_chunk(Send, Data) ->
     case Send(Data, nofin) of
+        ok -> {ok, nil};
+        {error, _} -> {error, nil}
+    end.
+
+push(Push, Data) ->
+    case Push(Data) of
         ok -> {ok, nil};
         {error, _} -> {error, nil}
     end.
