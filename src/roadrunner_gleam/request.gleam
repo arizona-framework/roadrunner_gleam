@@ -64,9 +64,40 @@ pub fn headers(request: Request) -> List(#(String, String))
 pub fn header(request: Request, name: String) -> Result(String, Nil)
 
 /// The request body. Roadrunner reads it before calling the handler, up to
-/// the listener's `max_content_length`.
+/// the listener's `max_content_length`. On a listener that reads bodies on
+/// demand (`roadrunner_gleam.read_body_on_demand`) it is empty: read the
+/// body with `read_body` or `read_chunk` instead.
 @external(erlang, "roadrunner_gleam_ffi", "body")
 pub fn body(request: Request) -> BitArray
+
+/// Why reading the body failed.
+pub type ReadError {
+  /// The body is larger than the listener's `max_content_length`.
+  BodyTooLarge
+  /// The client went away or sent a malformed body.
+  ReadFailed(String)
+}
+
+/// A piece of the body. Read the next one from `next`.
+pub type Chunk {
+  /// More of the body follows.
+  More(data: BitArray, next: Request)
+  /// The last piece: the body has been read.
+  Last(data: BitArray, next: Request)
+}
+
+/// Read the rest of the body. Returns the request to use after the read.
+/// On a listener that reads bodies before the handler, this is the body
+/// already read.
+@external(erlang, "roadrunner_gleam_ffi", "read_body")
+pub fn read_body(request: Request) -> Result(#(BitArray, Request), ReadError)
+
+/// Read the next piece of the body, at most `max_bytes` long, so a large
+/// upload never sits in memory whole. Bodies sent with chunked encoding
+/// are read across chunk boundaries the same way. Read only in the process
+/// that runs the handler.
+@external(erlang, "roadrunner_gleam_ffi", "read_chunk")
+pub fn read_chunk(request: Request, max_bytes: Int) -> Result(Chunk, ReadError)
 
 /// `Http` on a plain listener, `Https` on a TLS one.
 @external(erlang, "roadrunner_req", "scheme")
