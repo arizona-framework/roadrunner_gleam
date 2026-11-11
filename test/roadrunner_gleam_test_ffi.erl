@@ -72,7 +72,10 @@ ws_connect(Port, Path) ->
         ~"sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
         ~"sec-websocket-version: 13\r\n\r\n"
     ]),
-    {ok, Head} = recv_head(Socket, <<>>),
+    {ok, Head, Rest} = recv_head(Socket, <<>>),
+    %% Frames the server sent right after the 101 can come in the same
+    %% read; keep them for `ws_recv/1`.
+    _ = put({ws_buffer, Socket}, Rest),
     [StatusLine | Lines] = binary:split(Head, ~"\r\n", [global, trim_all]),
     <<"HTTP/1.1 101", _/binary>> = StatusLine,
     Headers = [
@@ -83,10 +86,8 @@ ws_connect(Port, Path) ->
 
 recv_head(Socket, Acc) ->
     case binary:split(Acc, ~"\r\n\r\n") of
-        [Head, <<>>] ->
-            {ok, Head};
-        [_Head, _Rest] ->
-            error(frames_after_handshake);
+        [Head, Rest] ->
+            {ok, Head, Rest};
         [_] ->
             {ok, Data} = gen_tcp:recv(Socket, 0, 5000),
             recv_head(Socket, <<Acc/binary, Data/binary>>)
@@ -116,15 +117,22 @@ opcode(pong) -> 10.
 %% Receive one unmasked server frame with a payload under 126 bytes, as
 %% `{Opcode, Payload}`.
 ws_recv(Socket) ->
-    {ok, <<_:4, Op:4, 0:1, Size:7>>} = gen_tcp:recv(Socket, 2, 5000),
+    <<_:4, Op:4, 0:1, Size:7>> = recv_exact(Socket, 2),
     true = Size < 126,
-    {opcode_name(Op), recv_payload(Socket, Size)}.
+    {opcode_name(Op), recv_exact(Socket, Size)}.
 
-recv_payload(_Socket, 0) ->
-    <<>>;
-recv_payload(Socket, Size) ->
-    {ok, Payload} = gen_tcp:recv(Socket, Size, 5000),
-    Payload.
+%% `Size` bytes, from what the handshake read left over first.
+recv_exact(Socket, Size) ->
+    Buffer = get({ws_buffer, Socket}),
+    case Buffer of
+        <<Bytes:Size/binary, Rest/binary>> ->
+            _ = put({ws_buffer, Socket}, Rest),
+            Bytes;
+        _ ->
+            {ok, Data} = gen_tcp:recv(Socket, 0, 5000),
+            _ = put({ws_buffer, Socket}, <<Buffer/binary, Data/binary>>),
+            recv_exact(Socket, Size)
+    end.
 
 opcode_name(1) -> text;
 opcode_name(2) -> binary;
