@@ -240,3 +240,25 @@ pub fn selector_test() {
   ws_close(socket)
   roadrunner_gleam.stop(listener)
 }
+
+// A ping longer than a control frame may carry ends the session instead
+// of going out malformed.
+pub fn long_ping_test() {
+  use listener, port <- serve("rg_ws_long_ping", fn(_) {
+    websocket.new(
+      on_init: fn(_) { websocket.continue(Nil) },
+      handler: fn(state, _) {
+        websocket.continue(state)
+        |> websocket.send([websocket.PingFrame(<<0:size(126)-unit(8)>>)])
+      },
+    )
+    |> websocket.upgrade
+  })
+  let #(socket, _) = ws_connect(port, "/")
+  send_text(socket, "go")
+  assert ws_closed(socket)
+  roadrunner_gleam.stop(listener)
+}
+
+@external(erlang, "roadrunner_gleam_test_ffi", "ws_closed")
+fn ws_closed(socket: Socket) -> Bool

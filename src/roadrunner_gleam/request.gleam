@@ -108,8 +108,9 @@ pub fn read_body(request: Request) -> Result(#(BitArray, Request), ReadError)
 /// Read the next piece of the body, at most `max_bytes` long, so a large
 /// upload never sits in memory whole. Bodies sent with chunked encoding
 /// are read across chunk boundaries the same way, and a body roadrunner
-/// already read is cut into pieces of the same size. Read only in the
-/// process that runs the handler.
+/// already read is cut into pieces of the same size. A `max_bytes` below 1
+/// reads 1 byte. After `Last`, reading again gives an empty `Last`. Read
+/// only in the process that runs the handler.
 @external(erlang, "roadrunner_gleam_ffi", "read_chunk")
 pub fn read_chunk(request: Request, max_bytes: Int) -> Result(Chunk, ReadError)
 

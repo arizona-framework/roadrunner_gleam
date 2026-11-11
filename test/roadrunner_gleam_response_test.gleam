@@ -67,18 +67,47 @@ fn chunked_or_push(request: Request) -> Response {
   }
 }
 
+// A HEAD response carries the framing the GET would have, and nothing
+// else: no body and no `content-length: 0` the GET would not send.
 pub fn head_chunked_test() {
   use port <- serve(roadrunner_gleam.new(chunked_or_push), "rg_head_chunked")
-  let response = raw(port, "HEAD", "/chunked")
-  assert status(response) == "HTTP/1.1 200 OK"
-  assert string.ends_with(response, "\r\n\r\n")
+  let #(headers, body) = split_response(raw(port, "HEAD", "/chunked"))
+  assert list.contains(headers, "transfer-encoding: chunked")
+  assert !list.any(headers, string.starts_with(_, "content-length"))
+  assert body == ""
 }
 
 pub fn head_push_test() {
   use port <- serve(roadrunner_gleam.new(chunked_or_push), "rg_head_push")
-  let response = raw(port, "HEAD", "/push")
-  assert status(response) == "HTTP/1.1 200 OK"
-  assert string.ends_with(response, "\r\n\r\n")
+  let #(headers, body) = split_response(raw(port, "HEAD", "/push"))
+  assert list.contains(headers, "transfer-encoding: chunked")
+  assert !list.any(headers, string.starts_with(_, "content-length"))
+  assert body == ""
+}
+
+// --- statuses without a body ----------------------------------------
+
+pub fn no_body_statuses_test() {
+  let handler = fn(req) {
+    case request.path_segments(req) {
+      ["204"] ->
+        response.new(204)
+        |> http_response.set_body(
+          response.Chunked(fn(_) { panic as "stream on 204" }),
+        )
+      _ -> http_response.Response(..response.text("not sent"), status: 304)
+    }
+  }
+  use port <- serve(roadrunner_gleam.new(handler), "rg_no_body")
+  let response = raw(port, "GET", "/204")
+  assert status(response) == "HTTP/1.1 204 No Content"
+  let #(headers, body) = split_response(response)
+  assert !list.any(headers, string.starts_with(_, "transfer-encoding"))
+  assert body == ""
+  let response = raw(port, "GET", "/304")
+  assert status(response) == "HTTP/1.1 304 Not Modified"
+  let #(_, body) = split_response(response)
+  assert body == ""
 }
 
 // --- files ----------------------------------------------------------
@@ -94,6 +123,26 @@ pub fn file_range_past_end_test() {
   }
   use port <- serve(roadrunner_gleam.new(handler), "rg_file_past_end")
   assert status(raw(port, "GET", "/")) == "HTTP/1.1 500 Internal Server Error"
+}
+
+pub fn negative_file_range_test() {
+  let handler = fn(req) {
+    let #(offset, length) = case request.path_segments(req) {
+      ["offset"] -> #(-5, 10)
+      _ -> #(0, -1)
+    }
+    response.new(200)
+    |> http_response.set_body(response.File(
+      path: "gleam.toml",
+      offset:,
+      length:,
+    ))
+  }
+  use port <- serve(roadrunner_gleam.new(handler), "rg_file_negative")
+  assert status(raw(port, "GET", "/offset"))
+    == "HTTP/1.1 500 Internal Server Error"
+  assert status(raw(port, "GET", "/length"))
+    == "HTTP/1.1 500 Internal Server Error"
 }
 
 pub fn file_zero_length_test() {

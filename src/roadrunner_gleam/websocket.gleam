@@ -56,6 +56,7 @@ pub type Message(custom) {
 pub type Frame {
   TextFrame(String)
   BinaryFrame(BitArray)
+  /// A ping, with at most 125 bytes of data: a longer one ends the session.
   PingFrame(BitArray)
 }
 

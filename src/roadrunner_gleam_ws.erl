@@ -72,7 +72,10 @@ frames(Frames) ->
 
 frame({text_frame, Text}) -> {text, Text};
 frame({binary_frame, Data}) -> {binary, Data};
-frame({ping_frame, Data}) -> {ping, Data}.
+%% A control frame carries at most 125 bytes (RFC 6455 §5.5); a longer
+%% ping would go out malformed, so it ends the session instead.
+frame({ping_frame, Data}) when byte_size(Data) =< 125 -> {ping, Data};
+frame({ping_frame, Data}) -> error({ping_payload_too_large, byte_size(Data)}).
 
 close_reason(normal) -> normal;
 close_reason(remote) -> remote;

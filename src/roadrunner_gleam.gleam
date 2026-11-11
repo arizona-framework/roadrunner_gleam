@@ -116,8 +116,10 @@ pub fn compress(builder: Builder) -> Builder {
 
 /// Leave request bodies unread until the handler reads them with
 /// `request.read_body` or `request.read_chunk`, so large uploads can be
-/// read in pieces. A body declared larger than `max_content_length` is
-/// still refused with `413` before the handler runs.
+/// read in pieces. The handler runs as soon as the headers are in; a body
+/// larger than `max_content_length` fails its read with `BodyTooLarge`.
+/// Over HTTP/1.1, a client that sent `expect: 100-continue` with a declared
+/// length over the limit gets a `413` without the handler running.
 pub fn read_body_on_demand(builder: Builder) -> Builder {
   option(builder, "body_buffering", atom_dynamic("manual"))
 }
@@ -163,7 +165,8 @@ pub fn listener_port(listener: Listener) -> Int {
 }
 
 /// Stop the listener and close its port, without waiting for open
-/// connections.
+/// connections. Stopping a listener already stopped does nothing. A
+/// supervised listener is started again by its supervisor.
 pub fn stop(listener: Listener) -> Nil {
   ffi_stop(listener.name)
 }
@@ -173,7 +176,8 @@ pub fn stop(listener: Listener) -> Nil {
 /// rest are closed. Fails with how many were still open at the timeout.
 ///
 /// A supervised listener exits after the drain, so its supervisor starts it
-/// again unless it is shut down too.
+/// again unless it is shut down too. Draining a listener already stopped
+/// succeeds at once.
 pub fn drain(listener: Listener, timeout: Int) -> Result(Nil, Int) {
   ffi_drain(listener.name, timeout)
 }
