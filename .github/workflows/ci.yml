@@ -1,0 +1,89 @@
+---
+# Lint runs the static checks once on the newest OTP. Test runs the suite
+# on every supported OTP with the Gleam and rebar3 of .tool-versions.
+name: CI
+
+"on":
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "**"
+  workflow_dispatch: {}
+  merge_group:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+
+    runs-on: ubuntu-26.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24
+        with:
+          version-type: strict
+          version-file: .tool-versions
+
+      - name: Cache deps and build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build
+          key: lint-${{ runner.os }}-${{ hashFiles('manifest.toml') }}
+          restore-keys: lint-${{ runner.os }}-
+
+      - name: Get deps
+        run: gleam deps download
+
+      - name: Check formatting
+        run: gleam format --check src test
+
+      - name: Compile
+        run: gleam build --warnings-as-errors
+
+      - name: Build docs
+        run: gleam docs build
+
+      - name: Build Hex package
+        run: gleam export hex-tarball
+
+  test:
+    name: Test (OTP ${{ matrix.otp }})
+
+    runs-on: ubuntu-26.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        otp: ["27", "28", "29"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24
+        with:
+          otp-version: ${{ matrix.otp }}
+          gleam-version: "1.19.2"
+          rebar3-version: "3.28.0"
+
+      - name: Cache deps and build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build
+          key: test-${{ runner.os }}-otp-${{ matrix.otp }}-${{ hashFiles('manifest.toml') }}
+          restore-keys: test-${{ runner.os }}-otp-${{ matrix.otp }}-
+
+      - name: Get deps
+        run: gleam deps download
+
+      - name: Run tests
+        run: gleam test
