@@ -14,7 +14,8 @@
 ////         handler: fn(state, message) {
 ////           case message {
 ////             websocket.Text(text) ->
-////               websocket.Continue(state, [websocket.TextFrame(text)])
+////               websocket.continue(state)
+////               |> websocket.send([websocket.TextFrame(text)])
 ////             _ -> websocket.continue(state)
 ////           }
 ////         },
@@ -31,8 +32,10 @@
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom.{type Atom}
-import gleam/erlang/process.{type Subject}
+import gleam/erlang/process.{type Selector, type Subject}
 import gleam/http/response as http_response
+import gleam/list
+import gleam/option.{type Option, None, Some}
 import roadrunner_gleam/response.{type Response}
 
 /// What the handler gets.
@@ -41,7 +44,8 @@ pub type Message(custom) {
   Text(String)
   /// A binary message from the client.
   Binary(BitArray)
-  /// A message sent to the `Subject` that `on_init` got.
+  /// A message sent to the `Subject` that `on_init` got, or one selected by
+  /// `with_selector`.
   Custom(custom)
   /// The listener is draining: close the session within `remaining`
   /// milliseconds, or it is closed for you.
@@ -55,13 +59,14 @@ pub type Frame {
   PingFrame(BitArray)
 }
 
-/// What to do after a callback.
-pub type Next(state) {
-  /// Send `frames` and keep the session open.
-  Continue(state: state, frames: List(Frame))
-  /// Send `frames`, then a close frame with `code` and `reason`, and end
-  /// the session. `code` must be one a server may send: 1000 to 1003,
-  /// 1007 to 1014, or 3000 to 4999. `reason` must be at most 123 bytes.
+/// What to do after a callback, built with `continue` or `close` and the
+/// functions that follow them.
+pub opaque type Next(state, custom) {
+  Continue(
+    state: state,
+    frames: List(Frame),
+    selector: Option(Selector(custom)),
+  )
   Close(state: state, frames: List(Frame), code: Int, reason: String)
 }
 
@@ -79,21 +84,57 @@ pub type CloseReason {
   Failed(String)
 }
 
-/// Keep the session open without sending anything.
-pub fn continue(state: state) -> Next(state) {
-  Continue(state:, frames: [])
+/// Keep the session open.
+pub fn continue(state: state) -> Next(state, custom) {
+  Continue(state:, frames: [], selector: None)
 }
 
 /// Close the session normally, with code 1000.
-pub fn close(state: state) -> Next(state) {
-  Close(state:, frames: [], code: 1000, reason: "")
+pub fn close(state: state) -> Next(state, custom) {
+  close_with(state, code: 1000, reason: "")
+}
+
+/// Close the session with a close code and a reason. `code` must be one a
+/// server may send: 1000 to 1003, 1007 to 1014, or 3000 to 4999. `reason`
+/// must be at most 123 bytes.
+pub fn close_with(
+  state: state,
+  code code: Int,
+  reason reason: String,
+) -> Next(state, custom) {
+  Close(state:, frames: [], code:, reason:)
+}
+
+/// Send these frames to the client, before the close frame when closing.
+pub fn send(
+  next: Next(state, custom),
+  frames: List(Frame),
+) -> Next(state, custom) {
+  case next {
+    Continue(..) -> Continue(..next, frames: list.append(next.frames, frames))
+    Close(..) -> Close(..next, frames: list.append(next.frames, frames))
+  }
+}
+
+/// Also receive the messages this selector selects, as `Custom`, from now
+/// on: monitors, messages to other subjects, or anything else. It replaces
+/// the selector set before; messages to the session's `Subject` always
+/// arrive.
+pub fn with_selector(
+  next: Next(state, custom),
+  selector: Selector(custom),
+) -> Next(state, custom) {
+  case next {
+    Continue(..) -> Continue(..next, selector: Some(selector))
+    Close(..) -> next
+  }
 }
 
 /// A WebSocket session, built with `new` and the functions that follow it.
 pub opaque type Builder(state, custom) {
   Builder(
-    on_init: fn(Subject(custom)) -> Next(state),
-    handler: fn(state, Message(custom)) -> Next(state),
+    on_init: fn(Subject(custom)) -> Next(state, custom),
+    handler: fn(state, Message(custom)) -> Next(state, custom),
     on_close: fn(state, CloseReason) -> Nil,
     options: Dict(Atom, Dynamic),
   )
@@ -103,8 +144,8 @@ pub opaque type Builder(state, custom) {
 /// sent to it reach `handler` as `Custom`, so other processes can push to
 /// the client through it.
 pub fn new(
-  on_init on_init: fn(Subject(custom)) -> Next(state),
-  handler handler: fn(state, Message(custom)) -> Next(state),
+  on_init on_init: fn(Subject(custom)) -> Next(state, custom),
+  handler handler: fn(state, Message(custom)) -> Next(state, custom),
 ) -> Builder(state, custom) {
   Builder(on_init:, handler:, on_close: fn(_, _) { Nil }, options: dict.new())
 }

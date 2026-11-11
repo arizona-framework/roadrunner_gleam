@@ -4,9 +4,10 @@
 
 -include_lib("kernel/include/file.hrl").
 
-%% The state of a pushing response: the Gleam callbacks, the tag of its
-%% subject, and the Gleam state.
--record(push, {handler, on_disconnect, tag, state}).
+%% The state of a pushing response: the Gleam callbacks, the selector for
+%% its subject alone, the selector in use (the subject's merged with the
+%% one the handler set), and the Gleam state.
+-record(push, {handler, on_disconnect, base, selector, state}).
 
 %% roadrunner callbacks
 -export([handle/1, handle_info/3]).
@@ -29,7 +30,10 @@
 ]).
 
 %% Response
--export([send_chunk/2, push/2, file_size/1, identity/1]).
+-export([send_chunk/2, file_size/1, identity/1]).
+
+%% Sessions
+-export([select_message/2]).
 
 %% --------------------------------------------------------------------
 %% roadrunner callback
@@ -67,16 +71,28 @@ to_response(Status, Headers, {push, {builder, OnInit, Handler, OnDisconnect}}) -
     %% Made here, in the process that runs the loop, so the messages sent
     %% to the subject reach `handle_info/3`.
     Subject = 'gleam@erlang@process':new_subject(),
-    {subject, _Owner, Tag} = Subject,
-    {loop, Status, Headers, #push{
-        handler = Handler,
-        on_disconnect = OnDisconnect,
-        tag = Tag,
-        state = OnInit(Subject)
-    }}.
+    Base = 'gleam@erlang@process':select('gleam@erlang@process':new_selector(), Subject),
+    Loop = #push{handler = Handler, on_disconnect = OnDisconnect, base = Base, selector = Base},
+    {loop, Status, Headers, after_init(OnInit(Subject), Loop)}.
 
-%% Messages to a pushing response. Only messages sent to its subject reach
+%% Nothing can be pushed before the headers go out, so what `on_init` sends,
+%% or its stop, comes back as a message the loop handles first.
+after_init({continue, State, [], Selector}, Loop) ->
+    Loop#push{state = State, selector = push_selector(Selector, Loop)};
+after_init({continue, State, Data, Selector}, Loop) ->
+    self() ! {roadrunner_gleam_push, Data, continue},
+    Loop#push{state = State, selector = push_selector(Selector, Loop)};
+after_init({stop, State, Data}, Loop) ->
+    self() ! {roadrunner_gleam_push, Data, stop},
+    Loop#push{state = State}.
+
+%% Messages to a pushing response. Only messages its selector selects reach
 %% Gleam; other messages are dropped.
+handle_info({roadrunner_gleam_push, Data, Then}, Push, #push{} = Loop) ->
+    case {send_data(Push, Data), Then} of
+        {ok, continue} -> {ok, Loop};
+        _ -> {stop, Loop}
+    end;
 handle_info({roadrunner_disconnect, _Reason}, _Push, #push{} = Loop) ->
     #push{on_disconnect = OnDisconnect, state = State} = Loop,
     _ = OnDisconnect(State),
@@ -84,15 +100,39 @@ handle_info({roadrunner_disconnect, _Reason}, _Push, #push{} = Loop) ->
 handle_info({roadrunner_drain, Deadline}, Push, #push{} = Loop) ->
     Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
     push_message({draining, Remaining}, Push, Loop);
-handle_info({Tag, Message}, Push, #push{tag = Tag} = Loop) ->
-    push_message({custom, Message}, Push, Loop);
-handle_info(_Info, _Push, Loop) ->
-    {ok, Loop}.
+handle_info(Info, Push, #push{selector = Selector} = Loop) ->
+    case select_message(Selector, Info) of
+        {ok, Message} -> push_message({custom, Message}, Push, Loop);
+        {error, nil} -> {ok, Loop}
+    end.
 
 push_message(Message, Push, #push{handler = Handler, state = State} = Loop) ->
-    case Handler(State, Message, Push) of
-        {continue, NewState} -> {ok, Loop#push{state = NewState}};
-        {stop, NewState} -> {stop, Loop#push{state = NewState}}
+    case Handler(State, Message) of
+        {continue, NewState, Data, Selector} ->
+            Loop2 = Loop#push{state = NewState, selector = push_selector(Selector, Loop)},
+            case send_data(Push, Data) of
+                ok -> {ok, Loop2};
+                error -> {stop, Loop2}
+            end;
+        {stop, NewState, Data} ->
+            _ = send_data(Push, Data),
+            {stop, Loop#push{state = NewState}}
+    end.
+
+%% A selector the handler set replaces the one before; the response's own
+%% subject wins over it, so its messages always arrive.
+push_selector(none, #push{selector = Selector}) ->
+    Selector;
+push_selector({some, Selector}, #push{base = Base}) ->
+    gleam_erlang_ffi:merge_selector(Selector, Base).
+
+%% The client being gone ends the response.
+send_data(_Push, []) ->
+    ok;
+send_data(Push, Data) ->
+    case Push(Data) of
+        ok -> ok;
+        {error, _} -> error
     end.
 
 %% A range past the end of the file would send a wrong content-length
@@ -254,12 +294,6 @@ send_chunk(Send, Data) ->
         {error, _} -> {error, nil}
     end.
 
-push(Push, Data) ->
-    case Push(Data) of
-        ok -> {ok, nil};
-        {error, _} -> {error, nil}
-    end.
-
 file_size(Path) ->
     case file:read_file_info(Path) of
         {ok, #file_info{type = regular, size = Size}} -> {ok, Size};
@@ -268,3 +302,28 @@ file_size(Path) ->
 
 identity(Term) ->
     Term.
+
+%% --------------------------------------------------------------------
+%% Sessions
+%% --------------------------------------------------------------------
+
+%% Apply a gleam_erlang `Selector` to a message already received, with the
+%% lookups `gleam_erlang_ffi:select/2` makes in its `receive`: a monitor's
+%% `'DOWN'` by its reference, then a tuple by its tag and size, then the
+%% handler for any message.
+select_message({selector, Handlers}, {'DOWN', Ref, _, _, _} = Message) when
+    is_map_key(Ref, Handlers)
+->
+    Handler = maps:get(Ref, Handlers),
+    {ok, Handler(gleam_erlang_ffi:cast_down_message(Message))};
+select_message({selector, Handlers}, Message) when
+    is_tuple(Message),
+    tuple_size(Message) > 0,
+    is_map_key({element(1, Message), tuple_size(Message)}, Handlers)
+->
+    Handler = maps:get({element(1, Message), tuple_size(Message)}, Handlers),
+    {ok, Handler(Message)};
+select_message({selector, #{anything := Handler}}, Message) ->
+    {ok, Handler(Message)};
+select_message({selector, _Handlers}, _Message) ->
+    {error, nil}.

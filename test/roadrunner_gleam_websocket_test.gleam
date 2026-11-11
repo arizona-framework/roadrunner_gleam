@@ -57,11 +57,14 @@ fn echo_session() -> Response {
     handler: fn(state, message) {
       case message {
         websocket.Text("bye") ->
-          websocket.Close(state, [websocket.TextFrame("ciao")], 4000, "done")
+          websocket.close_with(state, code: 4000, reason: "done")
+          |> websocket.send([websocket.TextFrame("ciao")])
         websocket.Text(text) ->
-          websocket.Continue(state, [websocket.TextFrame(text)])
+          websocket.continue(state)
+          |> websocket.send([websocket.TextFrame(text)])
         websocket.Binary(data) ->
-          websocket.Continue(state, [websocket.BinaryFrame(data)])
+          websocket.continue(state)
+          |> websocket.send([websocket.BinaryFrame(data)])
         _ -> websocket.continue(state)
       }
     },
@@ -95,7 +98,10 @@ pub fn close_test() {
 pub fn on_init_frames_and_headers_test() {
   use listener, port <- serve("rg_ws_init", fn(_) {
     websocket.new(
-      on_init: fn(_) { websocket.Continue(0, [websocket.TextFrame("ready")]) },
+      on_init: fn(_) {
+        websocket.continue(0)
+        |> websocket.send([websocket.TextFrame("ready")])
+      },
       handler: fn(count, _) { websocket.continue(count + 1) },
     )
     |> websocket.upgrade
@@ -119,7 +125,8 @@ pub fn custom_message_test() {
       handler: fn(state, message) {
         case message {
           websocket.Custom(text) ->
-            websocket.Continue(state, [websocket.TextFrame(text)])
+            websocket.continue(state)
+            |> websocket.send([websocket.TextFrame(text)])
           _ -> websocket.continue(state)
         }
       },
@@ -184,7 +191,8 @@ pub fn draining_test() {
       },
       handler: fn(state, message) {
         case message {
-          websocket.Draining(_) -> websocket.Close(state, [], 1001, "draining")
+          websocket.Draining(_) ->
+            websocket.close_with(state, code: 1001, reason: "draining")
           _ -> websocket.continue(state)
         }
       },
@@ -200,4 +208,35 @@ pub fn draining_test() {
   assert ws_recv(socket) == close_frame(1001, "draining")
   ws_close(socket)
   assert process.receive(drained, 5000) == Ok(Ok(Nil))
+}
+
+pub fn selector_test() {
+  use listener, port <- serve("rg_ws_selector", fn(_) {
+    websocket.new(
+      on_init: fn(_: Subject(String)) {
+        // A worker the session monitors; its exit arrives through the
+        // selector.
+        let worker = process.spawn_unlinked(fn() { process.sleep(50) })
+        let monitor = process.monitor(worker)
+        websocket.continue(Nil)
+        |> websocket.with_selector(
+          process.new_selector()
+          |> process.select_specific_monitor(monitor, fn(_) { "worker done" }),
+        )
+      },
+      handler: fn(state, message) {
+        case message {
+          websocket.Custom(text) ->
+            websocket.continue(state)
+            |> websocket.send([websocket.TextFrame(text)])
+          _ -> websocket.continue(state)
+        }
+      },
+    )
+    |> websocket.upgrade
+  })
+  let #(socket, _) = ws_connect(port, "/")
+  assert ws_recv(socket) == text_frame("worker done")
+  ws_close(socket)
+  roadrunner_gleam.stop(listener)
 }

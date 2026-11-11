@@ -84,10 +84,12 @@ Any other Roadrunner listener option, such as `max_content_length` or
   uploads never sit in memory whole
 - Responses: complete, chunked and files sent by the kernel
 - `content-length` set for you on complete and file responses
-- WebSocket sessions over HTTP/1.1, with typed state and a `Subject` other
-  processes can push through
+- WebSocket sessions over HTTP/1.1, with typed state, a `Subject` other
+  processes can push through, and a `Selector` for anything else, such as
+  monitors
 - Responses that stay open and push data as messages arrive, such as
-  server-sent events, on HTTP/1.1, HTTP/2 and HTTP/3
+  server-sent events with a builder for them, on HTTP/1.1, HTTP/2 and
+  HTTP/3
 - Responses are `gleam_http` responses, so `gleam/http/response`'s
   `set_header`, `set_cookie`, `redirect` and the rest work on them, and
   `request.to_http` gives a `gleam_http` request
