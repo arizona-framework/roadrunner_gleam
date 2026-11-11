@@ -25,12 +25,13 @@
 ////     },
 ////   )
 ////   |> push.response(200)
-////   |> response.set_header("content-type", "text/event-stream")
+////   |> http_response.set_header("content-type", "text/event-stream")
 //// }
 //// ```
 
 import gleam/bytes_tree.{type BytesTree}
 import gleam/erlang/process.{type Subject}
+import gleam/http/response as http_response
 import gleam/list
 import gleam/string
 import roadrunner_gleam/response.{type Response}
@@ -84,9 +85,10 @@ pub fn on_disconnect(
   Builder(..builder, on_disconnect:)
 }
 
-/// The response, with this status. Add headers with `response.set_header`.
+/// The response, with this status. Add headers with
+/// `gleam/http/response.set_header`.
 pub fn response(builder: Builder(state, custom), status: Int) -> Response {
-  response.Response(
+  http_response.Response(
     status:,
     headers: [],
     body: response.Push(to_push_body(builder)),

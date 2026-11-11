@@ -32,6 +32,7 @@ import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/erlang/atom.{type Atom}
 import gleam/erlang/process.{type Subject}
+import gleam/http/response as http_response
 import roadrunner_gleam/response.{type Response}
 
 /// What the handler gets.
@@ -170,10 +171,10 @@ fn option(
 }
 
 /// The response that upgrades the request to the session. Headers set on
-/// it with `response.set_header` go on the `101 Switching Protocols`
+/// it with `gleam/http/response.set_header` go on the `101 Switching Protocols`
 /// response, such as a `set-cookie`.
 pub fn upgrade(builder: Builder(state, custom)) -> Response {
-  response.Response(
+  http_response.Response(
     status: 101,
     headers: [],
     body: response.WebSocket(to_upgrade(builder)),

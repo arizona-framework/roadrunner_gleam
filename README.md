@@ -88,8 +88,9 @@ Any other Roadrunner listener option, such as `max_content_length` or
   processes can push through
 - Responses that stay open and push data as messages arrive, such as
   server-sent events, on HTTP/1.1, HTTP/2 and HTTP/3
-- `request.to_http` and `response.from_http` for libraries built on
-  `gleam_http`
+- Responses are `gleam_http` responses, so `gleam/http/response`'s
+  `set_header`, `set_cookie`, `redirect` and the rest work on them, and
+  `request.to_http` gives a `gleam_http` request
 - Start, stop and drain listeners, or run them under a `gleam/otp`
   supervisor
 

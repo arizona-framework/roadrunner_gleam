@@ -1,16 +1,16 @@
-//// The response a handler returns.
+//// The response a handler returns: a `gleam/http` response whose body is
+//// a `Body`. Build it with `gleam/http/response`, as in
+//// `response.new(200) |> response.set_body(Bytes(...))`, or with the
+//// helpers here.
 
 import gleam/bytes_tree.{type BytesTree}
 import gleam/http/response as http_response
-import gleam/list
-import gleam/string
 import gleam/string_tree.{type StringTree}
 
-/// An HTTP response. Header names must be lowercase, as HTTP/2 and HTTP/3
-/// require; `set_header` and `prepend_header` lowercase them for you.
-pub type Response {
-  Response(status: Int, headers: List(#(String, String)), body: Body)
-}
+/// The response a handler returns. `gleam/http/response`'s functions work on
+/// it, such as `set_header`, `prepend_header`, `set_cookie` and `redirect`.
+pub type Response =
+  http_response.Response(Body)
 
 /// What a response sends after its headers.
 pub type Body {
@@ -45,52 +45,29 @@ pub type Sender
 
 /// A response with an empty body.
 pub fn new(status: Int) -> Response {
-  Response(status:, headers: [], body: Bytes(bytes_tree.new()))
-}
-
-/// Set a header, replacing any with the same name. The name is lowercased,
-/// as HTTP/2 and HTTP/3 require.
-pub fn set_header(response: Response, name: String, value: String) -> Response {
-  let name = string.lowercase(name)
-  let headers = list.filter(response.headers, fn(header) { header.0 != name })
-  Response(..response, headers: [#(name, value), ..headers])
-}
-
-/// Add a header, keeping any with the same name, for headers that can
-/// repeat such as `set-cookie`. The name is lowercased.
-pub fn prepend_header(
-  response: Response,
-  name: String,
-  value: String,
-) -> Response {
-  let name = string.lowercase(name)
-  Response(..response, headers: [#(name, value), ..response.headers])
-}
-
-/// Set the body.
-pub fn set_body(response: Response, body: Body) -> Response {
-  Response(..response, body:)
+  http_response.new(status)
+  |> http_response.set_body(Bytes(bytes_tree.new()))
 }
 
 /// A `200` response with a `text/plain` body.
 pub fn text(body: String) -> Response {
   new(200)
-  |> set_header("content-type", "text/plain; charset=utf-8")
-  |> set_body(Bytes(bytes_tree.from_string(body)))
+  |> http_response.set_header("content-type", "text/plain; charset=utf-8")
+  |> http_response.set_body(Bytes(bytes_tree.from_string(body)))
 }
 
 /// A `200` response with a `text/html` body.
 pub fn html(body: StringTree) -> Response {
   new(200)
-  |> set_header("content-type", "text/html; charset=utf-8")
-  |> set_body(Bytes(bytes_tree.from_string_tree(body)))
+  |> http_response.set_header("content-type", "text/html; charset=utf-8")
+  |> http_response.set_body(Bytes(bytes_tree.from_string_tree(body)))
 }
 
 /// A `200` response with an `application/json` body.
 pub fn json(body: StringTree) -> Response {
   new(200)
-  |> set_header("content-type", "application/json")
-  |> set_body(Bytes(bytes_tree.from_string_tree(body)))
+  |> http_response.set_header("content-type", "application/json")
+  |> http_response.set_body(Bytes(bytes_tree.from_string_tree(body)))
 }
 
 /// A `File` body with the whole file. Fails when the path is not a regular
@@ -111,12 +88,3 @@ fn file_size(path: String) -> Result(Int, Nil)
 /// HTTP/2 connection that went away.
 @external(erlang, "roadrunner_gleam_ffi", "send_chunk")
 pub fn send_chunk(sender: Sender, data: BytesTree) -> Result(Nil, Nil)
-
-/// Build a response from a `gleam/http` response.
-pub fn from_http(response: http_response.Response(BytesTree)) -> Response {
-  Response(
-    status: response.status,
-    headers: response.headers,
-    body: Bytes(response.body),
-  )
-}

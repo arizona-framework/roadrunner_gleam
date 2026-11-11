@@ -2,6 +2,7 @@ import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dynamic
 import gleam/erlang/atom.{type Atom}
+import gleam/http/response as http_response
 import gleam/int
 import gleam/list
 import gleam/otp/actor
@@ -115,7 +116,7 @@ pub fn read_body_test() {
     let assert "" = to_string(request.body(request))
     let assert Ok(#(data, _)) = request.read_body(request)
     response.new(200)
-    |> response.set_body(response.Bytes(bytes_tree.from_bit_array(data)))
+    |> http_response.set_body(response.Bytes(bytes_tree.from_bit_array(data)))
   }
   use port <- serve(on_demand(handler), "rg_read_body")
   let #(_, _, body) = post(port, <<"whole body">>)
