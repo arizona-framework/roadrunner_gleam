@@ -180,3 +180,22 @@ pub fn event_test() {
     )
     == Ok("event: tick\nid: 7\nretry: 3000\ndata: 1\n\n")
 }
+
+// What `on_init` sends goes out before the reply to a message that was
+// already waiting.
+pub fn on_init_data_before_messages_test() {
+  use listener, url <- serve("rg_push_init_order", fn(_) {
+    push.new(
+      on_init: fn(subject) {
+        process.send(subject, Nil)
+        push.continue(Nil) |> push.send(bytes_tree.from_string("first "))
+      },
+      handler: fn(state, _) {
+        push.stop(state) |> push.send(bytes_tree.from_string("last"))
+      },
+    )
+    |> push.response(200)
+  })
+  assert process.receive(get_later(url), 5000) == Ok(<<"first last">>)
+  roadrunner_gleam.stop(listener)
+}
