@@ -8,6 +8,7 @@
 import gleam/http.{type Method, type Scheme}
 import gleam/http/request as http_request
 import gleam/int
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
@@ -119,10 +120,46 @@ pub fn scheme(request: Request) -> Scheme
 @external(erlang, "roadrunner_gleam_ffi", "http_version")
 pub fn http_version(request: Request) -> HttpVersion
 
+/// An IP address.
+pub type IpAddress {
+  IpV4(Int, Int, Int, Int)
+  IpV6(Int, Int, Int, Int, Int, Int, Int, Int)
+}
+
+/// An address and port at one end of the connection.
+pub type ConnectionInfo {
+  ConnectionInfo(ip_address: IpAddress, port: Int)
+}
+
+/// The address in its usual text form, such as `127.0.0.1` or `::1`.
+@external(erlang, "roadrunner_gleam_ffi", "ip_address_to_string")
+pub fn ip_address_to_string(ip_address: IpAddress) -> String
+
 /// The client's IP address. Behind trusted proxies configured with the
-/// listener's `real_ip` option, this is the address they forwarded.
+/// listener's `real_ip` option, this is the address they forwarded;
+/// otherwise it is the peer's.
 @external(erlang, "roadrunner_gleam_ffi", "client_ip")
-pub fn client_ip(request: Request) -> Result(String, Nil)
+pub fn client_ip(request: Request) -> Result(IpAddress, Nil)
+
+/// The address and port the connection comes from: the client, or the
+/// last proxy in front of it.
+@external(erlang, "roadrunner_gleam_ffi", "peer")
+pub fn peer(request: Request) -> Result(ConnectionInfo, Nil)
+
+/// The address and port of this server that the connection reached.
+@external(erlang, "roadrunner_gleam_ffi", "local_address")
+pub fn local_address(request: Request) -> Result(ConnectionInfo, Nil)
+
+/// The certificate the client sent over TLS, DER-encoded. Fails on plain
+/// connections and when the client sent none.
+@external(erlang, "roadrunner_gleam_ffi", "peer_certificate")
+pub fn peer_certificate(request: Request) -> Result(BitArray, Nil)
+
+/// The cookies the client sent, in order. A cookie whose name or value is
+/// not valid UTF-8 is left out. Set cookies with
+/// `gleam/http/response.set_cookie`.
+@external(erlang, "roadrunner_gleam_ffi", "cookies")
+pub fn cookies(request: Request) -> List(#(String, String))
 
 /// The id roadrunner gives each request, also set in the logger metadata.
 @external(erlang, "roadrunner_gleam_ffi", "request_id")
@@ -170,3 +207,39 @@ fn host_and_port(request: Request) -> #(String, Option(Int)) {
 fn bracket(split: #(String, String)) -> #(String, String) {
   #(split.0 <> "]", split.1)
 }
+
+/// Build a request from a `gleam/http` request, to test a handler without
+/// starting a listener. The request comes over HTTP/1.1, with the body
+/// already read. It has no peer, client address or request id.
+pub fn from_http(request: http_request.Request(BitArray)) -> Request {
+  let target = case request.query {
+    Some(query) -> request.path <> "?" <> query
+    None -> request.path
+  }
+  let host = case request.port {
+    Some(port) -> request.host <> ":" <> int.to_string(port)
+    None -> request.host
+  }
+  let headers = case list.key_find(request.headers, "host") {
+    Ok(_) -> request.headers
+    Error(Nil) -> [#("host", host), ..request.headers]
+  }
+  ffi_from_http(
+    http.method_to_string(request.method),
+    target,
+    request.path,
+    headers,
+    request.body,
+    request.scheme,
+  )
+}
+
+@external(erlang, "roadrunner_gleam_ffi", "from_http")
+fn ffi_from_http(
+  method: String,
+  target: String,
+  path: String,
+  headers: List(#(String, String)),
+  body: BitArray,
+  scheme: Scheme,
+) -> Request

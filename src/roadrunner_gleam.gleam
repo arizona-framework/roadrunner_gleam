@@ -43,6 +43,7 @@ pub opaque type Builder {
     name: Option(String),
     tls: Option(Tls),
     http3: Bool,
+    compress: Bool,
     options: Dict(Atom, Dynamic),
   )
 }
@@ -65,6 +66,7 @@ pub fn new(handler: fn(Request) -> Response) -> Builder {
     name: None,
     tls: None,
     http3: False,
+    compress: False,
     options: dict.new(),
   )
 }
@@ -101,6 +103,15 @@ pub fn tls(
 /// `tls` and a fixed port.
 pub fn http3(builder: Builder) -> Builder {
   Builder(..builder, http3: True)
+}
+
+/// Compress responses with `gzip` or `deflate`, as the client's
+/// `accept-encoding` allows. Complete bodies of 860 bytes or more are
+/// compressed, and chunked bodies are compressed as they go. Responses that
+/// already have a `content-encoding`, and file, push and WebSocket
+/// responses, are sent as they are.
+pub fn compress(builder: Builder) -> Builder {
+  Builder(..builder, compress: True)
 }
 
 /// Leave request bodies unread until the handler reads them with
@@ -181,6 +192,12 @@ fn listener_options(builder: Builder) -> Result(Dict(Atom, Dynamic), String) {
     Some(ip) -> [#("ip", ip)]
     None -> []
   }
+  let middlewares = case builder.compress {
+    True -> [
+      #("middlewares", dynamic.list([atom_dynamic("roadrunner_compress")])),
+    ]
+    False -> []
+  }
   let tls = case builder.tls {
     Some(tls) -> [#("tls", tls_options(tls))]
     None -> []
@@ -189,7 +206,7 @@ fn listener_options(builder: Builder) -> Result(Dict(Atom, Dynamic), String) {
     [
       #("port", dynamic.int(builder.port)),
       #("protocols", dynamic.list(list.map(protocols, atom_dynamic))),
-      ..list.append(ip, tls)
+      ..list.flatten([ip, tls, middlewares])
     ]
     |> list.map(fn(option) { #(atom.create(option.0), option.1) })
     |> dict.from_list

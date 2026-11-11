@@ -96,7 +96,7 @@ pub fn request_fields_test() {
     let assert ["users", "42"] = request.path_segments(req)
     let assert http.Http = request.scheme(req)
     let assert request.Http11 = request.http_version(req)
-    let assert Ok("127.0.0.1") = request.client_ip(req)
+    let assert Ok(request.IpV4(127, 0, 0, 1)) = request.client_ip(req)
     let assert Ok(id) = request.request_id(req)
     let assert True = id != ""
     let assert Ok("yes") = request.header(req, "X-Test")
