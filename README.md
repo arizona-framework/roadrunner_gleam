@@ -84,6 +84,10 @@ Any other Roadrunner listener option, such as `max_content_length` or
   uploads never sit in memory whole
 - Responses: complete, chunked and files sent by the kernel
 - `content-length` set for you on complete and file responses
+- Response compression with `gzip` or `deflate` (`roadrunner_gleam.compress`)
+- Cookies, the client's address, the connection's peer and local address,
+  and the client's TLS certificate
+- `request.from_http` to test handlers without starting a listener
 - WebSocket sessions over HTTP/1.1, with typed state, a `Subject` other
   processes can push through, and a `Selector` for anything else, such as
   monitors

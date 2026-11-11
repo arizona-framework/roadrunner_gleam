@@ -25,6 +25,12 @@
     read_chunk/2,
     query_params/1,
     client_ip/1,
+    ip_address_to_string/1,
+    peer/1,
+    local_address/1,
+    peer_certificate/1,
+    cookies/1,
+    from_http/6,
     request_id/1,
     http_version/1
 ]).
@@ -267,8 +273,50 @@ query_value(Value) -> Value.
 client_ip(Req) ->
     case roadrunner_req:client_ip(Req) of
         undefined -> {error, nil};
-        Ip -> {ok, list_to_binary(inet:ntoa(Ip))}
+        Ip -> {ok, to_ip_address(Ip)}
     end.
+
+peer(Req) ->
+    case roadrunner_req:peer(Req) of
+        {Ip, Port} -> {ok, {connection_info, to_ip_address(Ip), Port}};
+        undefined -> {error, nil}
+    end.
+
+local_address(Req) ->
+    case roadrunner_req:sockname(Req) of
+        {ok, {Ip, Port}} -> {ok, {connection_info, to_ip_address(Ip), Port}};
+        {error, _} -> {error, nil}
+    end.
+
+peer_certificate(Req) ->
+    case roadrunner_req:peercert(Req) of
+        {ok, Der} -> {ok, Der};
+        {error, _} -> {error, nil}
+    end.
+
+%% Gleam's `IpAddress` variants are the inet tuples with a tag in front.
+to_ip_address({A, B, C, D}) -> {ip_v4, A, B, C, D};
+to_ip_address({A, B, C, D, E, F, G, H}) -> {ip_v6, A, B, C, D, E, F, G, H}.
+
+ip_address_to_string(IpAddress) ->
+    [_Tag | Parts] = tuple_to_list(IpAddress),
+    list_to_binary(inet:ntoa(list_to_tuple(Parts))).
+
+cookies(Req) ->
+    [Cookie || {Name, Value} = Cookie <- roadrunner_req:parse_cookies(Req), is_utf8(Name), is_utf8(Value)].
+
+%% The fields roadrunner's accessors need, as its request builders set
+%% them, for a request built in a test.
+from_http(Method, Target, Path, Headers, Body, Scheme) ->
+    #{
+        method => Method,
+        target => Target,
+        path => Path,
+        version => {1, 1},
+        headers => Headers,
+        body => Body,
+        scheme => Scheme
+    }.
 
 request_id(Req) ->
     to_result(roadrunner_req:request_id(Req)).
