@@ -56,7 +56,7 @@ fn chunked_or_push(request: Request) -> Response {
     ["push"] ->
       push.new(
         on_init: fn(_) { panic as "on_init on HEAD" },
-        handler: fn(state, _, _) { push.Stop(state) },
+        handler: fn(state, _) { push.stop(state) },
       )
       |> push.response(200)
     _ ->
