@@ -34,12 +34,13 @@ jobs:
           version-type: strict
           version-file: .tool-versions
 
+      # Exact key only: Gleam trusts the package list in a restored
+      # `build/`, so a cache from another manifest would keep stale packages.
       - name: Cache deps and build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build
           key: lint-${{ runner.os }}-${{ hashFiles('manifest.toml') }}
-          restore-keys: lint-${{ runner.os }}-
 
       - name: Get deps
         run: gleam deps download
@@ -81,12 +82,13 @@ jobs:
           gleam-version: ${{ steps.versions.outputs.gleam }}
           rebar3-version: ${{ steps.versions.outputs.rebar }}
 
+      # Exact key only: Gleam trusts the package list in a restored
+      # `build/`, so a cache from another manifest would keep stale packages.
       - name: Cache deps and build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build
           key: test-${{ runner.os }}-otp-${{ matrix.otp }}-${{ hashFiles('manifest.toml') }}
-          restore-keys: test-${{ runner.os }}-otp-${{ matrix.otp }}-
 
       - name: Get deps
         run: gleam deps download
