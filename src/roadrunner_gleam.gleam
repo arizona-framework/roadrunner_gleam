@@ -99,8 +99,9 @@ pub fn tls(
   Builder(..builder, tls: Some(Tls(certfile:, keyfile:)))
 }
 
-/// Also serve HTTP/3, over QUIC on the UDP port with the same number. Needs
-/// `tls` and a fixed port.
+/// Also serve HTTP/3, over QUIC. Needs `tls`. With a fixed port, HTTP/3 is
+/// on the UDP port with the same number; with port `0` it gets a UDP port
+/// of its own: read it with `listener_quic_port`.
 pub fn http3(builder: Builder) -> Builder {
   Builder(..builder, http3: True)
 }
@@ -159,9 +160,15 @@ pub fn supervised(
   supervision.worker(fn() { start(builder) })
 }
 
-/// The port the listener is bound to.
+/// The TCP port the listener is bound to.
 pub fn listener_port(listener: Listener) -> Int {
   ffi_listener_port(listener.name)
+}
+
+/// The UDP port the listener serves HTTP/3 on. Fails when it serves no
+/// HTTP/3.
+pub fn listener_quic_port(listener: Listener) -> Result(Int, Nil) {
+  ffi_listener_quic_port(listener.name)
 }
 
 /// Stop the listener and close its port, without waiting for open
@@ -242,8 +249,6 @@ fn try_protocols(
   case builder.tls, builder.http3 {
     None, False -> next(["http1"])
     None, True -> Error("http3 needs tls")
-    Some(_), True if builder.port == 0 ->
-      Error("http3 needs a fixed port: with port 0, HTTP/3 gets its own")
     Some(_), False -> next(["http1", "http2"])
     Some(_), True -> next(["http1", "http2", "http3"])
   }
@@ -280,3 +285,6 @@ fn ffi_stop(name: Atom) -> Nil
 
 @external(erlang, "roadrunner_gleam_ffi", "drain")
 fn ffi_drain(name: Atom, timeout: Int) -> Result(Nil, Int)
+
+@external(erlang, "roadrunner_gleam_ffi", "listener_quic_port")
+fn ffi_listener_quic_port(name: Atom) -> Result(Int, Nil)

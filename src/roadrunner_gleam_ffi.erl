@@ -14,7 +14,7 @@
 -export([handle/1, handle_info/3]).
 
 %% Listener
--export([start_link/2, stop/1, drain/2, listener_port/1, parse_ip/1, routes/1, tuple2/2]).
+-export([start_link/2, stop/1, drain/2, listener_port/1, listener_quic_port/1, parse_ip/1, routes/1, tuple2/2]).
 
 %% Request
 -export([
@@ -241,6 +241,9 @@ drain_running(Name, Timeout) ->
 listener_port(Name) ->
     roadrunner_listener:port(Name).
 
+listener_quic_port(Name) ->
+    to_result(roadrunner_listener:quic_port(Name)).
+
 parse_ip(String) ->
     case inet:parse_address(binary_to_list(String)) of
         {ok, Ip} -> {ok, Ip};
@@ -292,11 +295,9 @@ read_body(Req) ->
         {error, Reason} -> {error, read_error(Reason)}
     end.
 
-%% roadrunner reads a body still on the connection in pieces of at most
-%% `MaxBytes`, but returns a body it already holds whole: in auto mode, and
-%% in manual mode when the whole body came with the headers (an HTTP/3
-%% client can send a small request in one packet). That one is cut here, so
-%% a piece is never larger, however the body arrived.
+%% roadrunner reads a body on demand in pieces of at most `MaxBytes`, but
+%% returns a body it read before the handler (auto mode) whole. That one is
+%% cut here, so a piece is never larger, whichever way the body was read.
 read_chunk(#{body_reader := _} = Req, MaxBytes) ->
     read_body_chunk(Req, max(MaxBytes, 1));
 read_chunk(#{roadrunner_gleam_read := done} = Req, _MaxBytes) ->

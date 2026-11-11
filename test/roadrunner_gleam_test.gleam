@@ -344,15 +344,15 @@ pub fn start_error_test() {
   let assert Error(actor.InitFailed(_)) = result
 }
 
-pub fn http3_needs_fixed_port_test() {
-  let assert Error(actor.InitFailed(
-    "http3 needs a fixed port: with port 0, HTTP/3 gets its own",
-  )) =
+pub fn no_quic_port_without_http3_test() {
+  let assert Ok(actor.Started(data: listener, ..)) =
     roadrunner_gleam.new(fn(_) { response.new(200) })
-    |> roadrunner_gleam.tls(certfile: "cert.pem", keyfile: "key.pem")
-    |> roadrunner_gleam.http3
     |> roadrunner_gleam.port(0)
+    |> roadrunner_gleam.name("rg_no_quic_port")
     |> roadrunner_gleam.start
+  let quic_port = roadrunner_gleam.listener_quic_port(listener)
+  roadrunner_gleam.stop(listener)
+  assert quic_port == Error(Nil)
 }
 
 pub fn drain_test() {

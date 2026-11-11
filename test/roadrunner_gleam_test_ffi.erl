@@ -1,7 +1,7 @@
 -module(roadrunner_gleam_test_ffi).
 -export([request/4, silence_logger/0, write_cert/1, tls_get/1, alpn/1]).
 -export([ws_connect/2, ws_send/3, ws_recv/1, ws_close/1, open_get/2, raw_request/2]).
--export([curl/1, free_port/0, h3_request/4, ws_closed/1]).
+-export([curl/1, h3_request/4, ws_closed/1]).
 
 %% A test certificate chain and key written as PEM files under `Dir`.
 write_cert(Dir) ->
@@ -183,21 +183,6 @@ collect_curl(Port, Acc) ->
         {Port, {exit_status, 0}} -> Acc;
         {Port, {exit_status, Status}} -> error({curl_failed, Status, Acc})
     after 10000 -> error({curl_timeout, Acc})
-    end.
-
-%% A port free on both TCP and UDP, for a listener that serves HTTP/3,
-%% which needs a fixed port.
-free_port() ->
-    {ok, Tcp} = gen_tcp:listen(0, [{ip, {127, 0, 0, 1}}]),
-    {ok, Port} = inet:port(Tcp),
-    case gen_udp:open(Port, [{ip, {127, 0, 0, 1}}]) of
-        {ok, Udp} ->
-            ok = gen_udp:close(Udp),
-            ok = gen_tcp:close(Tcp),
-            Port;
-        {error, _} ->
-            ok = gen_tcp:close(Tcp),
-            free_port()
     end.
 
 %% The quiche client roadrunner's HTTP/3 interop job runs, pinned by digest.
