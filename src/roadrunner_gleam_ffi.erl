@@ -253,7 +253,23 @@ read_body(Req) ->
         {error, Reason} -> {error, read_error(Reason)}
     end.
 
+%% roadrunner reads a body still on the connection in pieces of at most
+%% `MaxBytes`, but returns a body it already holds whole: in auto mode, and
+%% in manual mode when the whole body came with the headers (an HTTP/3
+%% client can send a small request in one packet). That one is cut here, so
+%% a piece is never larger, however the body arrived.
+read_chunk(#{body_reader := _} = Req, MaxBytes) ->
+    read_body_chunk(Req, MaxBytes);
 read_chunk(Req, MaxBytes) ->
+    Take = max(MaxBytes, 1),
+    case iolist_to_binary(roadrunner_req:body(Req)) of
+        <<Piece:Take/binary, Rest/binary>> when Rest =/= <<>> ->
+            {ok, {more, Piece, Req#{body => Rest}}};
+        Last ->
+            {ok, {last, Last, Req#{body => Last}}}
+    end.
+
+read_body_chunk(Req, MaxBytes) ->
     case roadrunner_req:read_body(Req, #{length => MaxBytes}) of
         {more, Data, Req2} -> {ok, {more, iolist_to_binary(Data), Req2}};
         {ok, Data, Req2} -> {ok, {last, iolist_to_binary(Data), Req2}};
