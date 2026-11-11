@@ -175,14 +175,14 @@ curl(Args) ->
     Port = open_port({spawn_executable, Curl}, [
         {args, Args}, exit_status, binary, stderr_to_stdout
     ]),
-    collect_curl(Port, <<>>).
+    collect_curl(Port, <<>>, 10000).
 
-collect_curl(Port, Acc) ->
+collect_curl(Port, Acc, Timeout) ->
     receive
-        {Port, {data, Data}} -> collect_curl(Port, <<Acc/binary, Data/binary>>);
+        {Port, {data, Data}} -> collect_curl(Port, <<Acc/binary, Data/binary>>, Timeout);
         {Port, {exit_status, 0}} -> Acc;
         {Port, {exit_status, Status}} -> error({curl_failed, Status, Acc})
-    after 10000 -> error({curl_timeout, Acc})
+    after Timeout -> error({curl_timeout, Acc})
     end.
 
 %% The quiche client roadrunner's HTTP/3 interop job runs, pinned by digest.
@@ -236,10 +236,25 @@ quiche(Url, Method, Body) ->
     Output.
 
 docker(Args) ->
+    ok = pull_quiche_once(),
+    run_docker(Args, 10000).
+
+%% The first run on a fresh machine downloads the image, which can take
+%% longer than one request may: download it once first, with time to spare.
+pull_quiche_once() ->
+    case persistent_term:get({?MODULE, quiche_pulled}, false) of
+        true ->
+            ok;
+        false ->
+            _ = run_docker([~"pull", ?QUICHE_IMAGE], 300000),
+            persistent_term:put({?MODULE, quiche_pulled}, true)
+    end.
+
+run_docker(Args, Timeout) ->
     Docker = os:find_executable("docker"),
     true = is_list(Docker),
     Port = open_port({spawn_executable, Docker}, [{args, Args}, exit_status, binary]),
-    collect_curl(Port, <<>>).
+    collect_curl(Port, <<>>, Timeout).
 
 %% Whether the server closed the connection, sending nothing first.
 ws_closed(Socket) ->
