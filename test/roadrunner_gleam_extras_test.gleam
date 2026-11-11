@@ -145,3 +145,22 @@ fn result_data(
     Error(error) -> Error(error)
   }
 }
+
+// `IpAddress` is public, so it can hold numbers no address has.
+pub fn ip_address_to_string_out_of_range_test() {
+  assert request.ip_address_to_string(request.IpV4(256, 0, 0, -1))
+    == "256.0.0.-1"
+  assert request.ip_address_to_string(request.IpV6(65_536, 0, 0, 0, 0, 0, 0, 1))
+    == "10000:0:0:0:0:0:0:1"
+}
+
+pub fn stop_twice_test() {
+  let assert Ok(actor.Started(data: listener, ..)) =
+    roadrunner_gleam.new(fn(_) { response.new(200) })
+    |> roadrunner_gleam.port(0)
+    |> roadrunner_gleam.name("rg_stop_twice")
+    |> roadrunner_gleam.start
+  roadrunner_gleam.stop(listener)
+  roadrunner_gleam.stop(listener)
+  assert roadrunner_gleam.drain(listener, 100) == Ok(Nil)
+}

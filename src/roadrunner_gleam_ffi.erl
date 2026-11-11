@@ -51,17 +51,35 @@
 handle(Req) ->
     Handler = roadrunner_req:state(Req),
     {response, Status, Headers, Body} = Handler(Req),
-    {to_response(Status, Headers, Body, roadrunner_req:method(Req)), Req}.
+    {to_response(Status, Headers, Body, Req), Req}.
 
+%% A WebSocket upgrade goes through as it is (its 101 is the upgrade).
+%% Statuses that carry no body (1xx, 204, 304, RFC 9110 §6.4.1) drop it.
 %% roadrunner strips the body of buffered and sendfile responses on HEAD
 %% but leaves stream and loop responses to the handler, so those get the
-%% headers only here (RFC 9110 §9.3.2).
-to_response(Status, Headers, {chunked, _Stream}, ~"HEAD") ->
+%% headers only here (RFC 9110 §9.3.2), with the framing a GET would have
+%% on HTTP/1.1, so roadrunner adds no `content-length: 0` the GET would
+%% not send (RFC 9110 §8.6).
+to_response(Status, Headers, {web_socket, _} = Body, _Req) ->
+    to_response(Status, Headers, Body);
+to_response(Status, Headers, _Body, _Req) when
+    Status < 200; Status =:= 204; Status =:= 304
+->
     {Status, Headers, ~""};
-to_response(Status, Headers, {push, _Builder}, ~"HEAD") ->
-    {Status, Headers, ~""};
-to_response(Status, Headers, Body, _Method) ->
+to_response(Status, Headers, {Streamed, _}, #{method := ~"HEAD"} = Req) when
+    Streamed =:= chunked; Streamed =:= push
+->
+    {Status, head_framing(Headers, roadrunner_req:version(Req)), ~""};
+to_response(Status, Headers, Body, _Req) ->
     to_response(Status, Headers, Body).
+
+head_framing(Headers, {1, 1}) ->
+    case lists:keymember(~"content-length", 1, Headers) of
+        true -> Headers;
+        false -> [{~"transfer-encoding", ~"chunked"} | Headers]
+    end;
+head_framing(Headers, _Version) ->
+    Headers.
 
 to_response(Status, Headers, {bytes, Data}) ->
     {Status, with_length(Status, Headers, iolist_size(Data)), Data};
@@ -99,14 +117,13 @@ after_init({stop, State, Data}, Loop) ->
 %% Gleam; other messages are dropped. A client that is gone gets nothing
 %% more, pending or not.
 handle_info({roadrunner_disconnect, _Reason}, _Push, #push{} = Loop) ->
-    #push{on_disconnect = OnDisconnect, state = State} = Loop,
-    _ = OnDisconnect(State),
-    {stop, Loop};
+    disconnected(Loop);
 handle_info(Info, Push, #push{pending = {Data, Then}} = Loop0) ->
     Loop = Loop0#push{pending = none},
     case {send_data(Push, Data), Then} of
         {ok, continue} -> handle_info(Info, Push, Loop);
-        _ -> {stop, Loop}
+        {ok, stop} -> {stop, Loop};
+        {error, _} -> disconnected(Loop)
     end;
 handle_info(roadrunner_gleam_push_pending, _Push, #push{} = Loop) ->
     {ok, Loop};
@@ -125,12 +142,19 @@ push_message(Message, Push, #push{handler = Handler, state = State} = Loop) ->
             Loop2 = Loop#push{state = NewState, selector = push_selector(Selector, Loop)},
             case send_data(Push, Data) of
                 ok -> {ok, Loop2};
-                error -> {stop, Loop2}
+                error -> disconnected(Loop2)
             end;
         {stop, NewState, Data} ->
             _ = send_data(Push, Data),
             {stop, Loop#push{state = NewState}}
     end.
+
+%% The client went away while the response was still going: a failed send
+%% usually notices before roadrunner's `roadrunner_disconnect` message does.
+%% The loop then ends, so that message never reaches the handler.
+disconnected(#push{on_disconnect = OnDisconnect, state = State} = Loop) ->
+    _ = OnDisconnect(State),
+    {stop, Loop}.
 
 %% A selector the handler set replaces the one before; the response's own
 %% subject wins over it, so its messages always arrive.
@@ -148,19 +172,22 @@ send_data(Push, Data) ->
         {error, _} -> error
     end.
 
-%% A range past the end of the file would send a wrong content-length
-%% (and crash the HTTP/3 reader), so it fails the request instead. A
+%% A range past the end of the file, or a negative one, would send a wrong
+%% content-length (and crash the HTTP/3 reader), so it fails the request
+%% instead. A
 %% zero length is an empty body: `file:sendfile/5` reads 0 as "to the
 %% end of the file".
 file_response(Status, Headers, _Path, _Offset, 0) ->
     {Status, with_length(Status, Headers, 0), ~""};
-file_response(Status, Headers, Path, Offset, Length) ->
+file_response(Status, Headers, Path, Offset, Length) when Offset >= 0, Length >= 0 ->
     case file:read_file_info(Path) of
         {ok, #file_info{size = Size}} when Offset + Length =< Size ->
             {sendfile, Status, with_length(Status, Headers, Length), {Path, Offset, Length}};
         _ ->
             error({file_range_past_end, Path, Offset, Length})
-    end.
+    end;
+file_response(_Status, _Headers, Path, Offset, Length) ->
+    error({negative_file_range, Path, Offset, Length}).
 
 %% roadrunner sends buffered and sendfile responses as given, so the
 %% content-length is added here unless the handler set one. Responses
@@ -189,11 +216,23 @@ start_link(Name, Opts) ->
         {error, Reason} -> {error, iolist_to_binary(io_lib:format("~0tp", [Reason]))}
     end.
 
+%% A listener already stopped has nothing left to stop or drain.
 stop(Name) ->
-    ok = roadrunner_listener:stop(Name),
-    nil.
+    case whereis(Name) of
+        undefined ->
+            nil;
+        _Pid ->
+            ok = roadrunner_listener:stop(Name),
+            nil
+    end.
 
 drain(Name, Timeout) ->
+    case whereis(Name) of
+        undefined -> {ok, nil};
+        _Pid -> drain_running(Name, Timeout)
+    end.
+
+drain_running(Name, Timeout) ->
     case roadrunner_listener:drain(Name, Timeout) of
         {ok, drained} -> {ok, nil};
         {timeout, Remaining} -> {error, Remaining}
@@ -259,14 +298,18 @@ read_body(Req) ->
 %% client can send a small request in one packet). That one is cut here, so
 %% a piece is never larger, however the body arrived.
 read_chunk(#{body_reader := _} = Req, MaxBytes) ->
-    read_body_chunk(Req, MaxBytes);
+    read_body_chunk(Req, max(MaxBytes, 1));
+read_chunk(#{roadrunner_gleam_read := done} = Req, _MaxBytes) ->
+    {ok, {last, ~"", Req}};
 read_chunk(Req, MaxBytes) ->
     Take = max(MaxBytes, 1),
     case iolist_to_binary(roadrunner_req:body(Req)) of
         <<Piece:Take/binary, Rest/binary>> when Rest =/= <<>> ->
             {ok, {more, Piece, Req#{body => Rest}}};
         Last ->
-            {ok, {last, Last, Req#{body => Last}}}
+            %% Reading again after the last piece gives nothing, as a body
+            %% read on demand does.
+            {ok, {last, Last, Req#{body => Last, roadrunner_gleam_read => done}}}
     end.
 
 read_body_chunk(Req, MaxBytes) ->
@@ -321,9 +364,19 @@ peer_certificate(Req) ->
 to_ip_address({A, B, C, D}) -> {ip_v4, A, B, C, D};
 to_ip_address({A, B, C, D, E, F, G, H}) -> {ip_v6, A, B, C, D, E, F, G, H}.
 
+%% `IpAddress` is public, so it may hold numbers no address has; those
+%% are written out as they are instead of failing.
 ip_address_to_string(IpAddress) ->
-    [_Tag | Parts] = tuple_to_list(IpAddress),
-    list_to_binary(inet:ntoa(list_to_tuple(Parts))).
+    [Tag | Parts] = tuple_to_list(IpAddress),
+    case inet:ntoa(list_to_tuple(Parts)) of
+        {error, einval} -> raw_ip_string(Tag, Parts);
+        Text -> list_to_binary(Text)
+    end.
+
+raw_ip_string(ip_v4, Parts) ->
+    iolist_to_binary(lists:join(~".", [integer_to_binary(Part) || Part <- Parts]));
+raw_ip_string(ip_v6, Parts) ->
+    iolist_to_binary(lists:join(~":", [integer_to_binary(Part, 16) || Part <- Parts])).
 
 cookies(Req) ->
     [Cookie || {Name, Value} = Cookie <- roadrunner_req:parse_cookies(Req), is_utf8(Name), is_utf8(Value)].

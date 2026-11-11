@@ -20,8 +20,8 @@ pub type Body {
   /// `length` bytes of a file, starting at `offset`, sent by the kernel
   /// without copying them into the BEAM. `content-length` is set to
   /// `length` unless the headers already have one. Set `content-type`
-  /// yourself. A range that runs past the end of the file fails the
-  /// request with a `500`.
+  /// yourself. A range that runs past the end of the file, or a negative
+  /// one, fails the request with a `500`.
   File(path: String, offset: Int, length: Int)
   /// A body sent in parts. Roadrunner calls the function with a `Sender`;
   /// send each part with `send_chunk`. The body ends when the function

@@ -76,8 +76,17 @@ fn to_string(data: BitArray) -> String {
 
 fn serve(name: String, test_body: fn(Int) -> a) -> a {
   let #(certfile, keyfile) = write_cert("build/test_tls")
+  let #(listener, port) = start(name, certfile, keyfile, 5)
+  let result = test_body(port)
+  roadrunner_gleam.stop(listener)
+  result
+}
+
+// The free port can be taken between finding it and binding it, so a
+// failed start tries another one.
+fn start(name: String, certfile: String, keyfile: String, tries: Int) {
   let port = free_port()
-  let assert Ok(actor.Started(data: listener, ..)) =
+  let started =
     roadrunner_gleam.new(handler)
     |> roadrunner_gleam.port(port)
     |> roadrunner_gleam.bind("127.0.0.1")
@@ -86,9 +95,11 @@ fn serve(name: String, test_body: fn(Int) -> a) -> a {
     |> roadrunner_gleam.http3
     |> roadrunner_gleam.read_body_on_demand
     |> roadrunner_gleam.start
-  let result = test_body(port)
-  roadrunner_gleam.stop(listener)
-  result
+  case started, tries {
+    Ok(actor.Started(data: listener, ..)), _ -> #(listener, port)
+    Error(_), 1 -> panic as "no free port for the listener"
+    Error(_), _ -> start(name, certfile, keyfile, tries - 1)
+  }
 }
 
 /// The response body from one request. HTTP/3 goes through
@@ -175,11 +186,14 @@ pub fn file_test() {
   assert fetch(protocol, port, "/file", "GET", "") == to_string(contents)
 }
 
+// HTTP/2 only: curl prints the response headers for `HEAD`, while quiche
+// prints nothing at all, so there is nothing to check over HTTP/3.
 pub fn head_chunked_test() {
-  use protocol, port <- each_protocol("rg_proto_head")
-  // curl prints the headers for `HEAD`, quiche nothing: neither may hold
-  // the body.
-  let output = fetch(protocol, port, "/chunked", "HEAD", "")
+  use port <- serve("rg_proto_head")
+  let url = "https://127.0.0.1:" <> int.to_string(port) <> "/chunked"
+  let output = to_string(curl(["-s", "-k", "--http2", "-I", url]))
+  assert string.starts_with(output, "HTTP/2 200")
+  assert !string.contains(string.lowercase(output), "content-length")
   assert !string.contains(output, "one two")
 }
 

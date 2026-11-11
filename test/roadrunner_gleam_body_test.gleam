@@ -149,3 +149,58 @@ pub fn body_too_large_test() {
   let response = chunked_post(port, ["hello", "world"])
   assert string.ends_with(response, "\r\n\r\ntoo large")
 }
+
+// A declared length over the limit fails the read, the handler running.
+pub fn body_too_large_declared_test() {
+  let builder =
+    on_demand(pieces)
+    |> roadrunner_gleam.option("max_content_length", dynamic.int(4))
+  use port <- serve(builder, "rg_body_too_large_declared")
+  let #(status, _, body) = post(port, <<"hello world">>)
+  assert status == 200
+  assert body == <<"too large">>
+}
+
+fn pieces_of(size: Int) -> fn(Request) -> Response {
+  fn(request) { response.text(int.to_string(count_pieces(request, size, 0))) }
+}
+
+fn count_pieces(request: Request, size: Int, count: Int) -> Int {
+  case request.read_chunk(request, size) {
+    Ok(request.More(_, next)) -> count_pieces(next, size, count + 1)
+    Ok(request.Last(_, _)) -> count + 1
+    Error(_) -> -1
+  }
+}
+
+// A size below 1 reads a byte at a time instead of nothing forever.
+pub fn read_chunk_zero_test() {
+  use port <- serve(on_demand(pieces_of(0)), "rg_read_chunk_zero")
+  let #(_, _, body) = post(port, <<"abc">>)
+  assert body == <<"3">>
+}
+
+pub fn read_chunk_zero_already_read_test() {
+  use port <- serve(
+    roadrunner_gleam.new(pieces_of(-2)),
+    "rg_read_chunk_zero_auto",
+  )
+  let #(_, _, body) = post(port, <<"abc">>)
+  assert body == <<"3">>
+}
+
+// After the last piece, reading again gives an empty last piece, however
+// the body was read.
+pub fn read_after_last_test() {
+  let handler = fn(req) {
+    let assert Ok(request.Last(data, next)) = request.read_chunk(req, 100)
+    let assert Ok(request.Last(again, _)) = request.read_chunk(next, 100)
+    response.text(to_string(data) <> "/" <> to_string(again))
+  }
+  use port <- serve(roadrunner_gleam.new(handler), "rg_read_after_last")
+  let #(_, _, body) = post(port, <<"abc">>)
+  assert body == <<"abc/">>
+  use port <- serve(on_demand(handler), "rg_read_after_last_demand")
+  let #(_, _, body) = post(port, <<"abc">>)
+  assert body == <<"abc/">>
+}

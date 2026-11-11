@@ -4,6 +4,7 @@ import gleam/erlang/atom.{type Atom}
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/otp/actor
+import gleam/string
 import roadrunner_gleam
 import roadrunner_gleam/push
 import roadrunner_gleam/request.{type Request}
@@ -197,5 +198,33 @@ pub fn on_init_data_before_messages_test() {
     |> push.response(200)
   })
   assert process.receive(get_later(url), 5000) == Ok(<<"first last">>)
+  roadrunner_gleam.stop(listener)
+}
+
+// A response that keeps pushing notices the client is gone when a send
+// fails, before roadrunner's disconnect message, and still runs
+// `on_disconnect`.
+pub fn on_disconnect_while_pushing_test() {
+  let self = process.new_subject()
+  use listener, _ <- serve("rg_push_disconnect_busy", fn(_) {
+    push.new(
+      on_init: fn(subject) {
+        process.send(self, "init")
+        process.send(subject, Nil)
+        push.continue(subject)
+      },
+      handler: fn(subject, _) {
+        process.send_after(subject, 5, Nil)
+        push.continue(subject)
+        |> push.send(bytes_tree.from_string(string.repeat("tick ", 200)))
+      },
+    )
+    |> push.on_disconnect(fn(_) { process.send(self, "disconnected") })
+    |> push.response(200)
+  })
+  let socket = open_get(roadrunner_gleam.listener_port(listener), "/")
+  assert process.receive(self, 1000) == Ok("init")
+  close(socket)
+  assert process.receive(self, 5000) == Ok("disconnected")
   roadrunner_gleam.stop(listener)
 }
