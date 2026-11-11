@@ -323,23 +323,32 @@ pub fn http3_needs_tls_test() {
     |> roadrunner_gleam.start
 }
 
-// A listener that fails in `init` exits the linked caller, so trap exits
-// while starting it. A port already in use fails on every OTP version.
+// A port already in use fails on every OTP version, and the caller gets
+// the error instead of exiting with the listener.
 pub fn start_error_test() {
   let assert Ok(actor.Started(data: taken, ..)) =
     roadrunner_gleam.new(fn(_) { response.new(200) })
     |> roadrunner_gleam.port(0)
     |> roadrunner_gleam.name("rg_port_taken")
     |> roadrunner_gleam.start
-  process.trap_exits(True)
   let result =
     roadrunner_gleam.new(fn(_) { response.new(200) })
     |> roadrunner_gleam.port(roadrunner_gleam.listener_port(taken))
     |> roadrunner_gleam.name("rg_start_error")
     |> roadrunner_gleam.start
-  process.trap_exits(False)
   roadrunner_gleam.stop(taken)
   let assert Error(actor.InitFailed(_)) = result
+}
+
+pub fn http3_needs_fixed_port_test() {
+  let assert Error(actor.InitFailed(
+    "http3 needs a fixed port: with port 0, HTTP/3 gets its own",
+  )) =
+    roadrunner_gleam.new(fn(_) { response.new(200) })
+    |> roadrunner_gleam.tls(certfile: "cert.pem", keyfile: "key.pem")
+    |> roadrunner_gleam.http3
+    |> roadrunner_gleam.port(0)
+    |> roadrunner_gleam.start
 }
 
 pub fn drain_test() {
@@ -362,13 +371,15 @@ pub fn supervised_test() {
       process.send(self, listener)
       listener
     })
-  let assert Ok(_) =
+  let assert Ok(actor.Started(pid: supervisor, ..)) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(child)
     |> static_supervisor.start
   let assert Ok(listener) = process.receive(self, 1000)
   let #(_, _, body) = get(base_url(listener))
   assert body == <<"supervised">>
+  process.unlink(supervisor)
+  process.kill(supervisor)
 }
 
 pub fn tls_test() {

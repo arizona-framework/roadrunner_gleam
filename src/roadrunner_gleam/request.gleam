@@ -116,7 +116,10 @@ pub fn client_ip(request: Request) -> Result(String, Nil)
 @external(erlang, "roadrunner_gleam_ffi", "request_id")
 pub fn request_id(request: Request) -> Result(String, Nil)
 
-/// Build a `gleam/http` request with the body read as a `BitArray`.
+/// Build a `gleam/http` request with the body as a `BitArray`. On a
+/// listener that reads bodies on demand, the body is what has been read
+/// so far: read it first with `read_body` and convert the request it
+/// returns.
 pub fn to_http(request: Request) -> http_request.Request(BitArray) {
   let #(host, port) = host_and_port(request)
   let query = case query(request) {

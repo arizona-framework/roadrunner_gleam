@@ -4,7 +4,8 @@
 //// The response's headers go out first. Then the handler runs for every
 //// message sent to the `Subject` that `on_init` got, and can push data to
 //// the client, until it returns `Stop` or the client goes away. It works
-//// the same over HTTP/1.1, HTTP/2 and HTTP/3.
+//// the same over HTTP/1.1, HTTP/2 and HTTP/3. A `HEAD` request gets the
+//// headers only, and `on_init` is not called.
 ////
 //// ```gleam
 //// fn events(request: Request) -> Response {
@@ -92,7 +93,10 @@ pub fn response(builder: Builder(state, custom), status: Int) -> Response {
   )
 }
 
-/// Send data to the client. Fails when the client is gone.
+/// Send data to the client. Fails when the client is gone. Call it only
+/// from the handler: from another process it can wait forever on an
+/// HTTP/2 connection that went away. Send to the response's `Subject`
+/// instead.
 @external(erlang, "roadrunner_gleam_ffi", "push")
 pub fn push(pusher: Pusher, data: BytesTree) -> Result(Nil, Nil)
 

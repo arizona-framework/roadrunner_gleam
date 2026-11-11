@@ -98,7 +98,7 @@ pub fn tls(
 }
 
 /// Also serve HTTP/3, over QUIC on the UDP port with the same number. Needs
-/// `tls`.
+/// `tls` and a fixed port.
 pub fn http3(builder: Builder) -> Builder {
   Builder(..builder, http3: True)
 }
@@ -114,13 +114,15 @@ pub fn read_body_on_demand(builder: Builder) -> Builder {
 /// Set any other roadrunner listener option, such as `max_content_length`
 /// or `keep_alive_timeout`. See `roadrunner_listener:opts()` in
 /// roadrunner's docs for the full list. It overrides what the functions
-/// above set.
+/// above set, except `routes`, which carries the handler.
 pub fn option(builder: Builder, name: String, value: Dynamic) -> Builder {
   let options = dict.insert(builder.options, atom.create(name), value)
   Builder(..builder, options:)
 }
 
-/// Start the listener, linked to the calling process.
+/// Start the listener, linked to the calling process. A listener that
+/// cannot start, such as on a port already in use, returns an error and
+/// leaves the caller running.
 pub fn start(
   builder: Builder,
 ) -> Result(actor.Started(Listener), actor.StartError) {
@@ -186,13 +188,16 @@ fn listener_options(builder: Builder) -> Result(Dict(Atom, Dynamic), String) {
   let options =
     [
       #("port", dynamic.int(builder.port)),
-      #("routes", routes(builder.handler)),
       #("protocols", dynamic.list(list.map(protocols, atom_dynamic))),
       ..list.append(ip, tls)
     ]
     |> list.map(fn(option) { #(atom.create(option.0), option.1) })
     |> dict.from_list
-  Ok(dict.merge(options, builder.options))
+  // The routes carry the handler, so an `option` never replaces them.
+  Ok(
+    dict.merge(options, builder.options)
+    |> dict.insert(atom.create("routes"), routes(builder.handler)),
+  )
 }
 
 fn try_ip(
@@ -216,6 +221,8 @@ fn try_protocols(
   case builder.tls, builder.http3 {
     None, False -> next(["http1"])
     None, True -> Error("http3 needs tls")
+    Some(_), True if builder.port == 0 ->
+      Error("http3 needs a fixed port: with port 0, HTTP/3 gets its own")
     Some(_), False -> next(["http1", "http2"])
     Some(_), True -> next(["http1", "http2", "http3"])
   }
