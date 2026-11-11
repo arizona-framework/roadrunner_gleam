@@ -1,5 +1,6 @@
 import gleam/bit_array
 import gleam/dynamic
+import gleam/http/response as http_response
 import gleam/list
 import gleam/otp/actor
 import gleam/string
@@ -48,24 +49,6 @@ fn status(response: String) -> String {
   line
 }
 
-// --- headers --------------------------------------------------------
-
-pub fn set_header_replaces_test() {
-  let response =
-    response.text("x")
-    |> response.set_header("Content-Type", "text/csv")
-  assert list.filter(response.headers, fn(h) { h.0 == "content-type" })
-    == [#("content-type", "text/csv")]
-}
-
-pub fn prepend_header_keeps_test() {
-  let response =
-    response.new(200)
-    |> response.prepend_header("Set-Cookie", "a=1")
-    |> response.prepend_header("set-cookie", "b=2")
-  assert response.headers == [#("set-cookie", "b=2"), #("set-cookie", "a=1")]
-}
-
 // --- HEAD -----------------------------------------------------------
 
 fn chunked_or_push(request: Request) -> Response {
@@ -78,7 +61,9 @@ fn chunked_or_push(request: Request) -> Response {
       |> push.response(200)
     _ ->
       response.new(200)
-      |> response.set_body(response.Chunked(fn(_) { panic as "stream on HEAD" }))
+      |> http_response.set_body(
+        response.Chunked(fn(_) { panic as "stream on HEAD" }),
+      )
   }
 }
 
@@ -101,7 +86,7 @@ pub fn head_push_test() {
 pub fn file_range_past_end_test() {
   let handler = fn(_) {
     response.new(200)
-    |> response.set_body(response.File(
+    |> http_response.set_body(response.File(
       path: "gleam.toml",
       offset: 0,
       length: 1_000_000,
@@ -114,7 +99,11 @@ pub fn file_range_past_end_test() {
 pub fn file_zero_length_test() {
   let handler = fn(_) {
     response.new(200)
-    |> response.set_body(response.File(path: "gleam.toml", offset: 5, length: 0))
+    |> http_response.set_body(response.File(
+      path: "gleam.toml",
+      offset: 5,
+      length: 0,
+    ))
   }
   use port <- serve(roadrunner_gleam.new(handler), "rg_file_zero")
   let #(headers, body) = split_response(raw(port, "GET", "/"))

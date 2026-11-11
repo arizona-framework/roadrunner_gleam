@@ -1,5 +1,6 @@
 import gleam/erlang/atom.{type Atom}
 import gleam/erlang/process.{type Subject}
+import gleam/http/response as http_response
 import gleam/list
 import gleam/otp/actor
 import roadrunner_gleam.{type Listener}
@@ -98,7 +99,7 @@ pub fn on_init_frames_and_headers_test() {
       handler: fn(count, _) { websocket.continue(count + 1) },
     )
     |> websocket.upgrade
-    |> response.set_header("set-cookie", "session=1")
+    |> http_response.set_header("set-cookie", "session=1")
   })
   let #(socket, headers) = ws_connect(port, "/")
   assert list.key_find(headers, "set-cookie") == Ok("session=1")

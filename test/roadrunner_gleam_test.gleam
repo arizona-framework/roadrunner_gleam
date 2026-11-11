@@ -136,7 +136,7 @@ pub fn request_body_test() {
   use url <- serve("rg_request_body", fn(req) {
     let assert http.Post = request.method(req)
     response.new(200)
-    |> response.set_body(
+    |> http_response.set_body(
       response.Bytes(bytes_tree.from_bit_array(request.body(req))),
     )
   })
@@ -212,7 +212,7 @@ pub fn html_and_json_response_test() {
 
 pub fn content_length_kept_test() {
   use url <- serve("rg_content_length_kept", fn(_) {
-    response.text("abc") |> response.set_header("content-length", "3")
+    response.text("abc") |> http_response.set_header("content-length", "3")
   })
   let #(_, headers, body) = get(url)
   assert body == <<"abc">>
@@ -229,7 +229,7 @@ pub fn no_content_length_on_204_test() {
 pub fn chunked_response_test() {
   use url <- serve("rg_chunked", fn(_) {
     response.new(200)
-    |> response.set_body(
+    |> http_response.set_body(
       response.Chunked(fn(sender) {
         let assert Ok(Nil) =
           response.send_chunk(sender, bytes_tree.from_string("one "))
@@ -248,7 +248,7 @@ pub fn file_response_test() {
   let path = "gleam.toml"
   use url <- serve("rg_file", fn(_) {
     let assert Ok(body) = response.file(path)
-    response.new(200) |> response.set_body(body)
+    response.new(200) |> http_response.set_body(body)
   })
   let #(status, headers, body) = get(url)
   let assert Ok(contents) = read_file(path)
@@ -261,7 +261,11 @@ pub fn file_response_test() {
 pub fn file_range_response_test() {
   use url <- serve("rg_file_range", fn(_) {
     response.new(200)
-    |> response.set_body(response.File(path: "gleam.toml", offset: 0, length: 4))
+    |> http_response.set_body(response.File(
+      path: "gleam.toml",
+      offset: 0,
+      length: 4,
+    ))
   })
   let #(_, headers, body) = get(url)
   assert body == <<"name">>
@@ -278,7 +282,7 @@ pub fn from_http_test() {
     http_response.new(201)
     |> http_response.set_header("x-from", "gleam_http")
     |> http_response.set_body(bytes_tree.from_string("created"))
-    |> response.from_http
+    |> http_response.map(response.Bytes)
   })
   let #(status, headers, body) = get(url)
   assert status == 201
