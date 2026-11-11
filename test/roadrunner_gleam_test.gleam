@@ -119,7 +119,7 @@ pub fn request_fields_test() {
   assert status == 200
   assert body
     == <<
-      "/users/42?a=1&b&c=x%20y [#(\"a\", \"1\"), #(\"b\", \"\"), #(\"c\", \"x y\")]",
+      "/users/42?a=1&b&c=x%20y Ok([#(\"a\", \"1\"), #(\"b\", \"\"), #(\"c\", \"x y\")])",
     >>
 }
 

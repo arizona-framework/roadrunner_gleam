@@ -40,8 +40,10 @@ fn raw_method(request: Request) -> String
 @external(erlang, "roadrunner_req", "path")
 pub fn path(request: Request) -> String
 
-/// The path split into its decoded segments, handy for routing with
-/// pattern matching: `/users/42` gives `["users", "42"]`.
+/// The path split into its segments, handy for routing with pattern
+/// matching: `/users/42` gives `["users", "42"]`. The segments are not
+/// percent-decoded: decode one with `uri.percent_decode` when it may hold
+/// escapes, such as `caf%C3%A9`.
 pub fn path_segments(request: Request) -> List(String) {
   uri.path_segments(path(request))
 }
@@ -51,17 +53,27 @@ pub fn path_segments(request: Request) -> List(String) {
 pub fn query(request: Request) -> String
 
 /// The decoded query parameters, in order. A key with no `=` gets an empty
-/// value.
+/// value. Fails when a decoded key or value is not valid UTF-8, as
+/// `gleam/http/request.get_query` does.
 @external(erlang, "roadrunner_gleam_ffi", "query_params")
-pub fn query_params(request: Request) -> List(#(String, String))
+pub fn query_params(request: Request) -> Result(List(#(String, String)), Nil)
 
-/// All request headers, in order, with lowercase names.
-@external(erlang, "roadrunner_req", "headers")
+/// All request headers, in order, with lowercase names. HTTP lets a value
+/// hold bytes that are not UTF-8; such a header is left out here. Read it
+/// with `header_bits`.
+@external(erlang, "roadrunner_gleam_ffi", "headers")
 pub fn headers(request: Request) -> List(#(String, String))
 
 /// The first value of a header. The name is matched without regard to case.
+/// Fails when the header is missing, or when its value is not valid UTF-8:
+/// read that one with `header_bits`.
 @external(erlang, "roadrunner_gleam_ffi", "header")
 pub fn header(request: Request, name: String) -> Result(String, Nil)
+
+/// The first value of a header as raw bytes, whatever they are. The name is
+/// matched without regard to case.
+@external(erlang, "roadrunner_gleam_ffi", "header_bits")
+pub fn header_bits(request: Request, name: String) -> Result(BitArray, Nil)
 
 /// The request body. Roadrunner reads it before calling the handler, up to
 /// the listener's `max_content_length`. On a listener that reads bodies on
