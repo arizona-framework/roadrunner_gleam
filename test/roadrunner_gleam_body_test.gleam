@@ -123,15 +123,22 @@ pub fn read_body_test() {
   assert body == <<"whole body">>
 }
 
+// A body roadrunner read before the handler comes in pieces of the same
+// size as one read on demand.
+pub fn read_chunk_when_already_read_test() {
+  use port <- serve(roadrunner_gleam.new(pieces), "rg_read_chunk_auto")
+  let #(_, _, body) = post(port, <<"hello world">>)
+  assert body == <<"hel|lo |wor|ld">>
+}
+
 pub fn read_body_when_already_read_test() {
   let handler = fn(request) {
     let assert Ok(#(data, _)) = request.read_body(request)
-    let assert Ok(request.Last(again, _)) = request.read_chunk(request, 2)
-    response.text(to_string(data) <> "/" <> to_string(again))
+    response.text(to_string(data))
   }
   use port <- serve(roadrunner_gleam.new(handler), "rg_read_body_auto")
   let #(_, _, body) = post(port, <<"abc">>)
-  assert body == <<"abc/abc">>
+  assert body == <<"abc">>
 }
 
 pub fn body_too_large_test() {

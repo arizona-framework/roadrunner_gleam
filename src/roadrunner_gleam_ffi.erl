@@ -6,8 +6,9 @@
 
 %% The state of a pushing response: the Gleam callbacks, the selector for
 %% its subject alone, the selector in use (the subject's merged with the
-%% one the handler set), and the Gleam state.
--record(push, {handler, on_disconnect, base, selector, state}).
+%% one the handler set), what `on_init` sent and has not gone out yet, and
+%% the Gleam state.
+-record(push, {handler, on_disconnect, base, selector, pending = none, state}).
 
 %% roadrunner callbacks
 -export([handle/1, handle_info/3]).
@@ -82,27 +83,33 @@ to_response(Status, Headers, {push, {builder, OnInit, Handler, OnDisconnect}}) -
     {loop, Status, Headers, after_init(OnInit(Subject), Loop)}.
 
 %% Nothing can be pushed before the headers go out, so what `on_init` sends,
-%% or its stop, comes back as a message the loop handles first.
+%% or its stop, waits in `pending` and goes out before the first message
+%% the loop handles, whichever it is; a message to itself makes sure there
+%% is one.
 after_init({continue, State, [], Selector}, Loop) ->
     Loop#push{state = State, selector = push_selector(Selector, Loop)};
 after_init({continue, State, Data, Selector}, Loop) ->
-    self() ! {roadrunner_gleam_push, Data, continue},
-    Loop#push{state = State, selector = push_selector(Selector, Loop)};
+    self() ! roadrunner_gleam_push_pending,
+    Loop#push{state = State, selector = push_selector(Selector, Loop), pending = {Data, continue}};
 after_init({stop, State, Data}, Loop) ->
-    self() ! {roadrunner_gleam_push, Data, stop},
-    Loop#push{state = State}.
+    self() ! roadrunner_gleam_push_pending,
+    Loop#push{state = State, pending = {Data, stop}}.
 
 %% Messages to a pushing response. Only messages its selector selects reach
-%% Gleam; other messages are dropped.
-handle_info({roadrunner_gleam_push, Data, Then}, Push, #push{} = Loop) ->
-    case {send_data(Push, Data), Then} of
-        {ok, continue} -> {ok, Loop};
-        _ -> {stop, Loop}
-    end;
+%% Gleam; other messages are dropped. A client that is gone gets nothing
+%% more, pending or not.
 handle_info({roadrunner_disconnect, _Reason}, _Push, #push{} = Loop) ->
     #push{on_disconnect = OnDisconnect, state = State} = Loop,
     _ = OnDisconnect(State),
     {stop, Loop};
+handle_info(Info, Push, #push{pending = {Data, Then}} = Loop0) ->
+    Loop = Loop0#push{pending = none},
+    case {send_data(Push, Data), Then} of
+        {ok, continue} -> handle_info(Info, Push, Loop);
+        _ -> {stop, Loop}
+    end;
+handle_info(roadrunner_gleam_push_pending, _Push, #push{} = Loop) ->
+    {ok, Loop};
 handle_info({roadrunner_drain, Deadline}, Push, #push{} = Loop) ->
     Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
     push_message({draining, Remaining}, Push, Loop);
@@ -246,7 +253,23 @@ read_body(Req) ->
         {error, Reason} -> {error, read_error(Reason)}
     end.
 
+%% roadrunner reads a body still on the connection in pieces of at most
+%% `MaxBytes`, but returns a body it already holds whole: in auto mode, and
+%% in manual mode when the whole body came with the headers (an HTTP/3
+%% client can send a small request in one packet). That one is cut here, so
+%% a piece is never larger, however the body arrived.
+read_chunk(#{body_reader := _} = Req, MaxBytes) ->
+    read_body_chunk(Req, MaxBytes);
 read_chunk(Req, MaxBytes) ->
+    Take = max(MaxBytes, 1),
+    case iolist_to_binary(roadrunner_req:body(Req)) of
+        <<Piece:Take/binary, Rest/binary>> when Rest =/= <<>> ->
+            {ok, {more, Piece, Req#{body => Rest}}};
+        Last ->
+            {ok, {last, Last, Req#{body => Last}}}
+    end.
+
+read_body_chunk(Req, MaxBytes) ->
     case roadrunner_req:read_body(Req, #{length => MaxBytes}) of
         {more, Data, Req2} -> {ok, {more, iolist_to_binary(Data), Req2}};
         {ok, Data, Req2} -> {ok, {last, iolist_to_binary(Data), Req2}};
