@@ -91,5 +91,9 @@ jobs:
       - name: Get deps
         run: gleam deps download
 
+      # The runner's curl has no HTTP/3, so the HTTP/3 tests run the quiche
+      # client in Docker, as roadrunner's interop job does.
       - name: Run tests
         run: gleam test
+        env:
+          ROADRUNNER_GLEAM_H3_CLIENT: docker

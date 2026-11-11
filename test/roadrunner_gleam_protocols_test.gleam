@@ -91,14 +91,41 @@ fn serve(name: String, test_body: fn(Int) -> a) -> a {
   result
 }
 
-fn fetch(protocol: Protocol, port: Int, path: String, extra: List(String)) {
-  let flag = case protocol {
-    H2 -> "--http2"
-    H3 -> "--http3-only"
+/// The response body from one request. HTTP/3 goes through
+/// `h3_request`, which picks a client that can speak it.
+fn fetch(
+  protocol: Protocol,
+  port: Int,
+  path: String,
+  method: String,
+  body: String,
+) -> String {
+  case protocol {
+    H2 -> {
+      let url = "https://127.0.0.1:" <> int.to_string(port) <> path
+      let data = case body {
+        "" -> []
+        _ -> ["--data-binary", body]
+      }
+      let method = case method {
+        "HEAD" -> ["-I"]
+        _ -> ["-X", method]
+      }
+      to_string(
+        curl(list.flatten([["-s", "-k", "--http2"], method, data, [url]])),
+      )
+    }
+    H3 -> to_string(h3_request(port, path, method, <<body:utf8>>))
   }
-  let url = "https://127.0.0.1:" <> int.to_string(port) <> path
-  to_string(curl(list.flatten([["-s", "-k", flag], extra, [url]])))
 }
+
+@external(erlang, "roadrunner_gleam_test_ffi", "h3_request")
+fn h3_request(
+  port: Int,
+  path: String,
+  method: String,
+  body: BitArray,
+) -> BitArray
 
 @external(erlang, "roadrunner_gleam_test_ffi", "curl")
 fn curl(args: List(String)) -> BitArray
@@ -123,35 +150,36 @@ pub fn version_test() {
     H2 -> "Http2"
     H3 -> "Http3"
   }
-  assert fetch(protocol, port, "/version", []) == expected
+  assert fetch(protocol, port, "/version", "GET", "") == expected
 }
 
 pub fn chunked_test() {
   use protocol, port <- each_protocol("rg_proto_chunked")
-  assert fetch(protocol, port, "/chunked", []) == "one two"
+  assert fetch(protocol, port, "/chunked", "GET", "") == "one two"
 }
 
 pub fn push_test() {
   use protocol, port <- each_protocol("rg_proto_push")
-  assert fetch(protocol, port, "/push", []) == "first last"
+  assert fetch(protocol, port, "/push", "GET", "") == "first last"
 }
 
 pub fn read_chunk_test() {
   use protocol, port <- each_protocol("rg_proto_pieces")
-  assert fetch(protocol, port, "/pieces", ["--data-binary", "hello world"])
+  assert fetch(protocol, port, "/pieces", "POST", "hello world")
     == "hell|o wo|rld"
 }
 
 pub fn file_test() {
   use protocol, port <- each_protocol("rg_proto_file")
   let assert Ok(contents) = read_file("gleam.toml")
-  assert fetch(protocol, port, "/file", []) == to_string(contents)
+  assert fetch(protocol, port, "/file", "GET", "") == to_string(contents)
 }
 
 pub fn head_chunked_test() {
   use protocol, port <- each_protocol("rg_proto_head")
-  let output = fetch(protocol, port, "/chunked", ["-I"])
-  assert string.starts_with(output, "HTTP/")
+  // curl prints the headers for `HEAD`, quiche nothing: neither may hold
+  // the body.
+  let output = fetch(protocol, port, "/chunked", "HEAD", "")
   assert !string.contains(output, "one two")
 }
 

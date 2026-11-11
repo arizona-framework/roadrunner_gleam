@@ -30,7 +30,8 @@ checks:
 
 - `gleam format --check src test`
 - `gleam build --warnings-as-errors`
-- `gleam test`
+- `gleam test` (the HTTP/3 tests need a curl with HTTP/3, or Docker with
+  `ROADRUNNER_GLEAM_H3_CLIENT=docker`)
 - `gleam docs build`
 
 ## License
