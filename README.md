@@ -80,6 +80,8 @@ Any other Roadrunner listener option, such as `max_content_length` or
 - Handlers are plain Gleam functions, the same on HTTP/1.1, HTTP/2 and
   HTTP/3
 - Requests are read in place, at the same cost as an Erlang handler
+- Request bodies read before the handler, or on demand in pieces so large
+  uploads never sit in memory whole
 - Responses: complete, chunked and files sent by the kernel
 - `content-length` set for you on complete and file responses
 - WebSocket sessions over HTTP/1.1, with typed state and a `Subject` other

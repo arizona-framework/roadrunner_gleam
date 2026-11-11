@@ -18,6 +18,8 @@
 -export([
     header/2,
     body/1,
+    read_body/1,
+    read_chunk/2,
     query_params/1,
     client_ip/1,
     request_id/1,
@@ -138,6 +140,24 @@ header(Req, Name) ->
 
 body(Req) ->
     iolist_to_binary(roadrunner_req:body(Req)).
+
+read_body(Req) ->
+    case roadrunner_req:read_body(Req) of
+        {ok, Data, Req2} -> {ok, {iolist_to_binary(Data), Req2}};
+        {error, Reason} -> {error, read_error(Reason)}
+    end.
+
+read_chunk(Req, MaxBytes) ->
+    case roadrunner_req:read_body(Req, #{length => MaxBytes}) of
+        {more, Data, Req2} -> {ok, {more, iolist_to_binary(Data), Req2}};
+        {ok, Data, Req2} -> {ok, {last, iolist_to_binary(Data), Req2}};
+        {error, Reason} -> {error, read_error(Reason)}
+    end.
+
+read_error(content_length_too_large) ->
+    body_too_large;
+read_error(Reason) ->
+    {read_failed, iolist_to_binary(io_lib:format("~0tp", [Reason]))}.
 
 %% A key with no `=` parses to `true`; Gleam gets an empty value.
 query_params(Req) ->

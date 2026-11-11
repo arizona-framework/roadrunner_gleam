@@ -103,6 +103,14 @@ pub fn http3(builder: Builder) -> Builder {
   Builder(..builder, http3: True)
 }
 
+/// Leave request bodies unread until the handler reads them with
+/// `request.read_body` or `request.read_chunk`, so large uploads can be
+/// read in pieces. A body declared larger than `max_content_length` is
+/// still refused with `413` before the handler runs.
+pub fn read_body_on_demand(builder: Builder) -> Builder {
+  option(builder, "body_buffering", atom_dynamic("manual"))
+}
+
 /// Set any other roadrunner listener option, such as `max_content_length`
 /// or `keep_alive_timeout`. See `roadrunner_listener:opts()` in
 /// roadrunner's docs for the full list. It overrides what the functions
