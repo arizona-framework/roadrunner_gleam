@@ -74,32 +74,23 @@ fn to_string(data: BitArray) -> String {
   text
 }
 
-fn serve(name: String, test_body: fn(Int) -> a) -> a {
+/// A TLS listener on port 0 serving HTTP/1.1, HTTP/2 and HTTP/3, handing
+/// the test its TCP port and the UDP port HTTP/3 got.
+fn serve(name: String, test_body: fn(Int, Int) -> a) -> a {
   let #(certfile, keyfile) = write_cert("build/test_tls")
-  let #(listener, port) = start(name, certfile, keyfile, 5)
-  let result = test_body(port)
-  roadrunner_gleam.stop(listener)
-  result
-}
-
-// The free port can be taken between finding it and binding it, so a
-// failed start tries another one.
-fn start(name: String, certfile: String, keyfile: String, tries: Int) {
-  let port = free_port()
-  let started =
+  let assert Ok(actor.Started(data: listener, ..)) =
     roadrunner_gleam.new(handler)
-    |> roadrunner_gleam.port(port)
+    |> roadrunner_gleam.port(0)
     |> roadrunner_gleam.bind("127.0.0.1")
     |> roadrunner_gleam.name(name)
     |> roadrunner_gleam.tls(certfile:, keyfile:)
     |> roadrunner_gleam.http3
     |> roadrunner_gleam.read_body_on_demand
     |> roadrunner_gleam.start
-  case started, tries {
-    Ok(actor.Started(data: listener, ..)), _ -> #(listener, port)
-    Error(_), 1 -> panic as "no free port for the listener"
-    Error(_), _ -> start(name, certfile, keyfile, tries - 1)
-  }
+  let assert Ok(quic_port) = roadrunner_gleam.listener_quic_port(listener)
+  let result = test_body(roadrunner_gleam.listener_port(listener), quic_port)
+  roadrunner_gleam.stop(listener)
+  result
 }
 
 /// The response body from one request. HTTP/3 goes through
@@ -141,16 +132,13 @@ fn h3_request(
 @external(erlang, "roadrunner_gleam_test_ffi", "curl")
 fn curl(args: List(String)) -> BitArray
 
-@external(erlang, "roadrunner_gleam_test_ffi", "free_port")
-fn free_port() -> Int
-
 @external(erlang, "roadrunner_gleam_test_ffi", "write_cert")
 fn write_cert(dir: String) -> #(String, String)
 
 fn each_protocol(name: String, check: fn(Protocol, Int) -> Nil) -> Nil {
-  use port <- serve(name)
-  check(H2, port)
-  check(H3, port)
+  use tcp_port, quic_port <- serve(name)
+  check(H2, tcp_port)
+  check(H3, quic_port)
 }
 
 // --- tests ----------------------------------------------------------
@@ -189,7 +177,7 @@ pub fn file_test() {
 // HTTP/2 only: curl prints the response headers for `HEAD`, while quiche
 // prints nothing at all, so there is nothing to check over HTTP/3.
 pub fn head_chunked_test() {
-  use port <- serve("rg_proto_head")
+  use port, _ <- serve("rg_proto_head")
   let url = "https://127.0.0.1:" <> int.to_string(port) <> "/chunked"
   let output = to_string(curl(["-s", "-k", "--http2", "-I", url]))
   assert string.starts_with(output, "HTTP/2 200")

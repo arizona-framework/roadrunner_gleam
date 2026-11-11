@@ -70,7 +70,8 @@ roadrunner_gleam.new(handle)
 ```
 
 A TLS listener serves HTTP/1.1 and HTTP/2 on the TCP port. `http3` also
-serves HTTP/3 over QUIC on the UDP port with the same number.
+serves HTTP/3 over QUIC on the UDP port with the same number, or, with
+port `0`, on a UDP port of its own that `listener_quic_port` returns.
 
 Any other Roadrunner listener option, such as `max_content_length` or
 `keep_alive_timeout`, can be set with `roadrunner_gleam.option`.
