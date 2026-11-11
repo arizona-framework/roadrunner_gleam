@@ -24,7 +24,12 @@ pub type Body {
   /// send each part with `send_chunk`. The body ends when the function
   /// returns.
   Chunked(fn(Sender) -> Nil)
+  /// A WebSocket upgrade, made with `websocket.upgrade`.
+  WebSocket(Upgrade)
 }
+
+/// A WebSocket session to upgrade to, made with `websocket.upgrade`.
+pub type Upgrade
 
 /// Sends the parts of a `Chunked` body.
 pub type Sender
