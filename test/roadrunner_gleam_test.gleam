@@ -324,16 +324,21 @@ pub fn http3_needs_tls_test() {
 }
 
 // A listener that fails in `init` exits the linked caller, so trap exits
-// while starting it.
+// while starting it. A port already in use fails on every OTP version.
 pub fn start_error_test() {
+  let assert Ok(actor.Started(data: taken, ..)) =
+    roadrunner_gleam.new(fn(_) { response.new(200) })
+    |> roadrunner_gleam.port(0)
+    |> roadrunner_gleam.name("rg_port_taken")
+    |> roadrunner_gleam.start
   process.trap_exits(True)
   let result =
     roadrunner_gleam.new(fn(_) { response.new(200) })
-    |> roadrunner_gleam.tls(certfile: "missing.pem", keyfile: "missing.pem")
-    |> roadrunner_gleam.port(0)
+    |> roadrunner_gleam.port(roadrunner_gleam.listener_port(taken))
     |> roadrunner_gleam.name("rg_start_error")
     |> roadrunner_gleam.start
   process.trap_exits(False)
+  roadrunner_gleam.stop(taken)
   let assert Error(actor.InitFailed(_)) = result
 }
 
