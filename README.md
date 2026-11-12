@@ -86,6 +86,10 @@ Any other Roadrunner listener option, such as `max_content_length` or
 - Responses: complete, chunked and files sent by the kernel
 - `content-length` set for you on complete and file responses
 - Response compression with `gzip` or `deflate` (`roadrunner_gleam.compress`)
+- A heap floor, on by default: a connection keeps the heap its last
+  request needed, so handlers that build sizeable responses, such as JSON,
+  collect far less, and a WebSocket session does the same for the pushes
+  it builds (`roadrunner_gleam.heap_floor`, `websocket.heap_floor`)
 - Cookies, the client's address, the connection's peer and local address,
   and the client's TLS certificate
 - `request.from_http` to test handlers without starting a listener

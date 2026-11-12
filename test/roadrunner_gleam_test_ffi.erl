@@ -2,6 +2,7 @@
 -export([request/4, silence_logger/0, write_cert/1, tls_get/1, alpn/1]).
 -export([ws_connect/2, ws_send/3, ws_recv/1, ws_close/1, open_get/2, raw_request/2]).
 -export([curl/1, h3_request/4, ws_closed/1]).
+-export([min_heap_size/0, default_min_heap_size/0, rounded_heap_size/1, alloc/0]).
 
 %% A test certificate chain and key written as PEM files under `Dir`.
 write_cert(Dir) ->
@@ -262,3 +263,31 @@ ws_closed(Socket) ->
         {error, closed} -> true;
         _ -> false
     end.
+
+%% The calling process's `min_heap_size`: inside a handler, the floor its
+%% connection or session runs at.
+min_heap_size() ->
+    {min_heap_size, Words} = process_info(self(), min_heap_size),
+    Words.
+
+default_min_heap_size() ->
+    {min_heap_size, Words} = erlang:system_info(min_heap_size),
+    Words.
+
+%% `Words` as the emulator stores a `min_heap_size`: rounded up to a step
+%% of its heap-size ladder.
+rounded_heap_size(Words) ->
+    Self = self(),
+    _ = spawn_opt(
+        fun() -> Self ! {rounded, process_info(self(), min_heap_size)} end,
+        [{min_heap_size, Words}]
+    ),
+    receive
+        {rounded, {min_heap_size, Rounded}} -> Rounded
+    after 5000 -> error(no_probe)
+    end.
+
+%% Grow the calling process's heap: about 40,000 words live until it
+%% returns.
+alloc() ->
+    length(lists:seq(1, 20000)).

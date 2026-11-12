@@ -164,3 +164,58 @@ pub fn stop_twice_test() {
   roadrunner_gleam.stop(listener)
   assert roadrunner_gleam.drain(listener, 100) == Ok(Nil)
 }
+
+// --- heap floor -----------------------------------------------------
+
+/// Two pipelined requests on one connection: `/alloc` grows the heap, then
+/// `/report` answers with the `min_heap_size` the connection runs at.
+fn floor_after_alloc(builder: Builder, name: String) -> Int {
+  use port <- serve(builder, name)
+  let response =
+    raw_request(port, <<
+      "GET /alloc HTTP/1.1\r\nhost: x\r\n\r\n":utf8,
+      "GET /report HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n":utf8,
+    >>)
+  let assert Ok(text) = bit_array.to_string(response)
+  let assert Ok(last) = list.last(string.split(text, "\r\n\r\n"))
+  let assert Ok(floor) = int.parse(last)
+  floor
+}
+
+fn floor_handler(req: request.Request) -> response.Response {
+  case request.path_segments(req) {
+    ["alloc"] -> response.text(int.to_string(alloc()))
+    _ -> response.text(int.to_string(min_heap_size()))
+  }
+}
+
+pub fn heap_floor_test() {
+  let floor =
+    roadrunner_gleam.new(floor_handler)
+    |> roadrunner_gleam.heap_floor(max: 1000)
+    |> floor_after_alloc("rg_heap_floor")
+  assert floor == rounded_heap_size(1000)
+}
+
+pub fn no_heap_floor_test() {
+  let floor =
+    roadrunner_gleam.new(floor_handler)
+    |> roadrunner_gleam.no_heap_floor
+    |> floor_after_alloc("rg_no_heap_floor")
+  assert floor == default_min_heap_size()
+}
+
+@external(erlang, "roadrunner_gleam_test_ffi", "raw_request")
+fn raw_request(port: Int, request: BitArray) -> BitArray
+
+@external(erlang, "roadrunner_gleam_test_ffi", "alloc")
+fn alloc() -> Int
+
+@external(erlang, "roadrunner_gleam_test_ffi", "min_heap_size")
+fn min_heap_size() -> Int
+
+@external(erlang, "roadrunner_gleam_test_ffi", "default_min_heap_size")
+fn default_min_heap_size() -> Int
+
+@external(erlang, "roadrunner_gleam_test_ffi", "rounded_heap_size")
+fn rounded_heap_size(words: Int) -> Int

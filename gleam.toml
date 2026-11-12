@@ -1,5 +1,5 @@
 name = "roadrunner_gleam"
-version = "0.1.0"
+version = "0.2.0"
 description = "Run Gleam web apps on Roadrunner, the pure-Erlang HTTP/1.1, HTTP/2, HTTP/3 and WebSocket server"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "arizona-framework", repo = "roadrunner_gleam" }

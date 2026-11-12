@@ -125,6 +125,38 @@ pub fn read_body_on_demand(builder: Builder) -> Builder {
   option(builder, "body_buffering", atom_dynamic("manual"))
 }
 
+/// The most heap, in words, a connection keeps between requests. After
+/// each request a connection keeps the heap that request needed, up to
+/// `max`, so the next one starts at that size instead of growing it again
+/// through several garbage collections: a handler that builds sizeable
+/// responses, such as JSON, collects far less. HTTP/2 and HTTP/3 streams
+/// start at the size their connection learned, and WebSocket sessions
+/// default to it (see `websocket.heap_floor`). On by default with
+/// `max: 46422` (about 360 KB).
+pub fn heap_floor(builder: Builder, max max: Int) -> Builder {
+  option(
+    builder,
+    "handler_spawn",
+    dynamic.properties([
+      #(
+        atom_dynamic("heap_floor"),
+        dynamic.properties([#(atom_dynamic("max"), dynamic.int(max))]),
+      ),
+    ]),
+  )
+}
+
+/// Turn the heap floor off, for connections, streams and, unless a session
+/// sets its own, WebSocket sessions: each request grows the heap from the
+/// connection's starting size again.
+pub fn no_heap_floor(builder: Builder) -> Builder {
+  option(
+    builder,
+    "handler_spawn",
+    dynamic.properties([#(atom_dynamic("heap_floor"), dynamic.bool(False))]),
+  )
+}
+
 /// Set any other roadrunner listener option, such as `max_content_length`
 /// or `keep_alive_timeout`. See `roadrunner_listener:opts()` in
 /// roadrunner's docs for the full list. It overrides what the functions
