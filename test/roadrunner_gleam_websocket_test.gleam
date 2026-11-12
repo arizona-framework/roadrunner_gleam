@@ -1,6 +1,8 @@
+import gleam/bit_array
 import gleam/erlang/atom.{type Atom}
 import gleam/erlang/process.{type Subject}
 import gleam/http/response as http_response
+import gleam/int
 import gleam/list
 import gleam/otp/actor
 import roadrunner_gleam.{type Listener}
@@ -262,3 +264,111 @@ pub fn long_ping_test() {
 
 @external(erlang, "roadrunner_gleam_test_ffi", "ws_closed")
 fn ws_closed(socket: Socket) -> Bool
+
+// --- heap floor -----------------------------------------------------
+
+/// A session whose `Custom("alloc")` grows its heap and whose
+/// `Custom("report")` answers with the `min_heap_size` it runs at, set up
+/// by `configure`. Runs `test_body` with a function that sends a custom
+/// message and one that reads the next text frame.
+fn heap_session(
+  name: String,
+  listener: fn(roadrunner_gleam.Builder) -> roadrunner_gleam.Builder,
+  configure: fn(websocket.Builder(Nil, String)) ->
+    websocket.Builder(Nil, String),
+) -> Int {
+  let self = process.new_subject()
+  let assert Ok(actor.Started(data: server, ..)) =
+    roadrunner_gleam.new(fn(_) {
+      websocket.new(
+        on_init: fn(subject) {
+          process.send(self, subject)
+          websocket.continue(Nil)
+        },
+        handler: fn(state, message) {
+          case message {
+            websocket.Custom("alloc") -> {
+              let _ = alloc()
+              websocket.continue(state)
+              |> websocket.send([websocket.TextFrame("allocated")])
+            }
+            websocket.Custom(_) ->
+              websocket.continue(state)
+              |> websocket.send([
+                websocket.TextFrame(int.to_string(min_heap_size())),
+              ])
+            _ -> websocket.continue(state)
+          }
+        },
+      )
+      |> configure
+      |> websocket.upgrade
+    })
+    |> roadrunner_gleam.port(0)
+    |> roadrunner_gleam.bind("127.0.0.1")
+    |> roadrunner_gleam.name(name)
+    |> listener
+    |> roadrunner_gleam.start
+  let #(socket, _) = ws_connect(roadrunner_gleam.listener_port(server), "/")
+  let assert Ok(session): Result(Subject(String), Nil) =
+    process.receive(self, 1000)
+  process.send(session, "alloc")
+  assert ws_recv(socket) == text_frame("allocated")
+  process.send(session, "report")
+  let #(_, report) = ws_recv(socket)
+  let assert Ok(report) = bit_array_to_int(report)
+  ws_close(socket)
+  roadrunner_gleam.stop(server)
+  report
+}
+
+fn bit_array_to_int(bits: BitArray) -> Result(Int, Nil) {
+  case bit_array.to_string(bits) {
+    Ok(text) -> int.parse(text)
+    Error(_) -> Error(Nil)
+  }
+}
+
+pub fn heap_floor_by_default_test() {
+  let floor = heap_session("rg_ws_floor_default", fn(b) { b }, fn(b) { b })
+  assert floor > default_min_heap_size()
+}
+
+pub fn heap_floor_test() {
+  let floor =
+    heap_session("rg_ws_floor", fn(b) { b }, websocket.heap_floor(
+      _,
+      max: 1000,
+      min: 0,
+    ))
+  assert floor == rounded_heap_size(1000)
+}
+
+pub fn no_heap_floor_test() {
+  let floor =
+    heap_session("rg_ws_no_floor", fn(b) { b }, websocket.no_heap_floor)
+  assert floor == default_min_heap_size()
+}
+
+/// The listener's `no_heap_floor` turns it off for sessions too.
+pub fn listener_no_heap_floor_test() {
+  let floor =
+    heap_session(
+      "rg_ws_listener_no_floor",
+      roadrunner_gleam.no_heap_floor,
+      fn(b) { b },
+    )
+  assert floor == default_min_heap_size()
+}
+
+@external(erlang, "roadrunner_gleam_test_ffi", "alloc")
+fn alloc() -> Int
+
+@external(erlang, "roadrunner_gleam_test_ffi", "min_heap_size")
+fn min_heap_size() -> Int
+
+@external(erlang, "roadrunner_gleam_test_ffi", "default_min_heap_size")
+fn default_min_heap_size() -> Int
+
+@external(erlang, "roadrunner_gleam_test_ffi", "rounded_heap_size")
+fn rounded_heap_size(words: Int) -> Int

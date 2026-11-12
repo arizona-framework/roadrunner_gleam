@@ -203,6 +203,34 @@ pub fn hibernate_after(
   option(builder, "hibernate_after", dynamic.int(milliseconds))
 }
 
+/// The session's heap floor. After a `Custom` message whose handling
+/// needed at least `min` words of heap, the session keeps that heap, up to
+/// `max` words, so the next push starts at that size instead of growing it
+/// again through several garbage collections. Smaller messages leave it,
+/// and client messages never raise it. Defaults to the listener's
+/// `roadrunner_gleam.heap_floor` with `min: 2586` (about 20 KB).
+pub fn heap_floor(
+  builder: Builder(state, custom),
+  max max: Int,
+  min min: Int,
+) -> Builder(state, custom) {
+  option(
+    builder,
+    "heap_floor",
+    dynamic.properties([
+      #(atom.to_dynamic(atom.create("max")), dynamic.int(max)),
+      #(atom.to_dynamic(atom.create("min")), dynamic.int(min)),
+    ]),
+  )
+}
+
+/// Turn the session's heap floor off.
+pub fn no_heap_floor(
+  builder: Builder(state, custom),
+) -> Builder(state, custom) {
+  option(builder, "heap_floor", dynamic.bool(False))
+}
+
 fn option(
   builder: Builder(state, custom),
   name: String,

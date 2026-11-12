@@ -12,7 +12,7 @@ packages = [
   { name = "gleam_otp", version = "1.3.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib"], otp_app = "gleam_otp", source = "hex", outer_checksum = "DE4CA6850842F0266EE95317A25DD6A0A0F20CDFAB7C0ADC2E63251D7C3C72EC" },
   { name = "gleam_stdlib", version = "1.0.5", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "CEE5B6C076A85B45F60C585F4316C63EC8B7127C119D5738C3958A9C4D50404E" },
   { name = "gleeunit", version = "1.11.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "EC31ABA74256AEA531EDF8169931D775BBB384FED0A8A1BDC4DD9354E3E21826" },
-  { name = "roadrunner", version = "0.15.0", build_tools = ["rebar3"], requirements = [], otp_app = "roadrunner", source = "hex", outer_checksum = "655C207C87258ECFB011B670DB939F8FA662B08351B7CCB5C5A0D8C2A4543882" },
+  { name = "roadrunner", version = "0.16.0", build_tools = ["rebar3"], requirements = [], otp_app = "roadrunner", source = "hex", outer_checksum = "5CF888BF9EA1C81B7320B2B8407A569016B7931023728C21D7905515B42B19FB" },
   { name = "splitter", version = "1.3.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "splitter", source = "hex", outer_checksum = "8F1485306E0D59168A39E12ED8844F9F616EC59C3C63AFCFDAE04DBD68690CBC" },
 ]
 
@@ -22,4 +22,4 @@ gleam_http = { version = ">= 4.5.0 and < 5.0.0" }
 gleam_otp = { version = ">= 1.3.0 and < 2.0.0" }
 gleam_stdlib = { version = ">= 1.0.0 and < 2.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
-roadrunner = { version = ">= 0.15.0 and < 0.16.0" }
+roadrunner = { version = ">= 0.16.0 and < 0.17.0" }
