@@ -1,5 +1,5 @@
 name = "roadrunner_gleam"
-version = "0.2.0"
+version = "0.2.1"
 description = "Run Gleam web apps on Roadrunner, the pure-Erlang HTTP/1.1, HTTP/2, HTTP/3 and WebSocket server"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "arizona-framework", repo = "roadrunner_gleam" }
@@ -11,7 +11,7 @@ target = "erlang"
 
 [dependencies]
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
-roadrunner = ">= 0.16.0 and < 0.17.0"
+roadrunner = "== 0.16.1"
 gleam_erlang = ">= 1.3.0 and < 2.0.0"
 gleam_otp = ">= 1.3.0 and < 2.0.0"
 gleam_http = ">= 4.5.0 and < 5.0.0"
