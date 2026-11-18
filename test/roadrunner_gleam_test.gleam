@@ -43,7 +43,7 @@ fn serve(
   |> with_listener(test_body)
 }
 
-fn with_listener(builder: Builder, test_body: fn(String) -> a) -> a {
+fn with_listener(builder: Builder(has_tls), test_body: fn(String) -> a) -> a {
   let assert Ok(actor.Started(data: listener, ..)) =
     roadrunner_gleam.start(builder)
   let result = test_body(base_url(listener))
@@ -320,12 +320,13 @@ pub fn invalid_ip_test() {
     |> roadrunner_gleam.start
 }
 
-pub fn http3_needs_tls_test() {
-  let assert Error(actor.InitFailed("http3 needs tls")) =
-    roadrunner_gleam.new(fn(_) { response.new(200) })
-    |> roadrunner_gleam.http3
-    |> roadrunner_gleam.start
-}
+// This is redundant as http without tls will be catched at compile time now
+// pub fn http3_needs_tls_test() {
+//   let assert Error(actor.InitFailed("http3 needs tls")) =
+//     roadrunner_gleam.new(fn(_) { response.new(200) })
+//     |> roadrunner_gleam.http3
+//     |> roadrunner_gleam.start
+// }
 
 // A port already in use fails on every OTP version, and the caller gets
 // the error instead of exiting with the listener.

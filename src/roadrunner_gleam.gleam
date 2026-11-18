@@ -34,8 +34,12 @@ import gleam/otp/supervision
 import roadrunner_gleam/request.{type Request}
 import roadrunner_gleam/response.{type Response}
 
+pub type WithTls
+
+pub type WithoutTls
+
 /// How to run a listener, built with `new` and the functions that follow it.
-pub opaque type Builder {
+pub opaque type Builder(has_tls) {
   Builder(
     handler: fn(Request) -> Response,
     port: Int,
@@ -58,7 +62,7 @@ pub opaque type Listener {
 }
 
 /// A listener on port 4000 of every interface, over plain HTTP/1.1.
-pub fn new(handler: fn(Request) -> Response) -> Builder {
+pub fn new(handler: fn(Request) -> Response) -> Builder(WithoutTls) {
   Builder(
     handler:,
     port: 4000,
@@ -73,36 +77,36 @@ pub fn new(handler: fn(Request) -> Response) -> Builder {
 
 /// The port to listen on. `0` picks a free one; read it with
 /// `listener_port`.
-pub fn port(builder: Builder, port: Int) -> Builder {
+pub fn port(builder: Builder(has_tls), port: Int) -> Builder(has_tls) {
   Builder(..builder, port:)
 }
 
 /// The address to listen on, such as `"127.0.0.1"` or `"::1"`.
-pub fn bind(builder: Builder, ip: String) -> Builder {
+pub fn bind(builder: Builder(has_tls), ip: String) -> Builder(has_tls) {
   Builder(..builder, ip: Some(ip))
 }
 
 /// The name the listener is registered under. Defaults to one built from
 /// the port. Give each listener its own name when you run several on
 /// port `0`.
-pub fn name(builder: Builder, name: String) -> Builder {
+pub fn name(builder: Builder(has_tls), name: String) -> Builder(has_tls) {
   Builder(..builder, name: Some(name))
 }
 
 /// Serve over TLS with the certificate and key in these PEM files. TLS
 /// listeners serve HTTP/2 as well as HTTP/1.1.
 pub fn tls(
-  builder: Builder,
+  builder: Builder(WithoutTls),
   certfile certfile: String,
   keyfile keyfile: String,
-) -> Builder {
+) -> Builder(WithTls) {
   Builder(..builder, tls: Some(Tls(certfile:, keyfile:)))
 }
 
 /// Also serve HTTP/3, over QUIC. Needs `tls`. With a fixed port, HTTP/3 is
 /// on the UDP port with the same number; with port `0` it gets a UDP port
 /// of its own: read it with `listener_quic_port`.
-pub fn http3(builder: Builder) -> Builder {
+pub fn http3(builder: Builder(WithTls)) -> Builder(WithTls) {
   Builder(..builder, http3: True)
 }
 
@@ -111,7 +115,7 @@ pub fn http3(builder: Builder) -> Builder {
 /// compressed, and chunked bodies are compressed as they go. Responses that
 /// already have a `content-encoding`, and file, push and WebSocket
 /// responses, are sent as they are.
-pub fn compress(builder: Builder) -> Builder {
+pub fn compress(builder: Builder(has_tls)) -> Builder(has_tls) {
   Builder(..builder, compress: True)
 }
 
@@ -121,7 +125,7 @@ pub fn compress(builder: Builder) -> Builder {
 /// larger than `max_content_length` fails its read with `BodyTooLarge`.
 /// Over HTTP/1.1, a client that sent `expect: 100-continue` with a declared
 /// length over the limit gets a `413` without the handler running.
-pub fn read_body_on_demand(builder: Builder) -> Builder {
+pub fn read_body_on_demand(builder: Builder(has_tls)) -> Builder(has_tls) {
   option(builder, "body_buffering", atom_dynamic("manual"))
 }
 
@@ -133,7 +137,7 @@ pub fn read_body_on_demand(builder: Builder) -> Builder {
 /// start at the size their connection learned, and WebSocket sessions
 /// default to it (see `websocket.heap_floor`). On by default with
 /// `max: 46422` (about 360 KB).
-pub fn heap_floor(builder: Builder, max max: Int) -> Builder {
+pub fn heap_floor(builder: Builder(has_tls), max max: Int) -> Builder(has_tls) {
   option(
     builder,
     "handler_spawn",
@@ -149,7 +153,7 @@ pub fn heap_floor(builder: Builder, max max: Int) -> Builder {
 /// Turn the heap floor off, for connections, streams and, unless a session
 /// sets its own, WebSocket sessions: each request grows the heap from the
 /// connection's starting size again.
-pub fn no_heap_floor(builder: Builder) -> Builder {
+pub fn no_heap_floor(builder: Builder(has_tls)) -> Builder(has_tls) {
   option(
     builder,
     "handler_spawn",
@@ -161,7 +165,11 @@ pub fn no_heap_floor(builder: Builder) -> Builder {
 /// or `keep_alive_timeout`. See `roadrunner_listener:opts()` in
 /// roadrunner's docs for the full list. It overrides what the functions
 /// above set, except `routes`, which carries the handler.
-pub fn option(builder: Builder, name: String, value: Dynamic) -> Builder {
+pub fn option(
+  builder: Builder(has_tls),
+  name: String,
+  value: Dynamic,
+) -> Builder(has_tls) {
   let options = dict.insert(builder.options, atom.create(name), value)
   Builder(..builder, options:)
 }
@@ -170,7 +178,7 @@ pub fn option(builder: Builder, name: String, value: Dynamic) -> Builder {
 /// cannot start, such as on a port already in use, returns an error and
 /// leaves the caller running.
 pub fn start(
-  builder: Builder,
+  builder: Builder(has_tls),
 ) -> Result(actor.Started(Listener), actor.StartError) {
   case listener_options(builder) {
     Ok(options) -> {
@@ -187,7 +195,7 @@ pub fn start(
 /// A child specification to start the listener under a `gleam/otp`
 /// supervisor.
 pub fn supervised(
-  builder: Builder,
+  builder: Builder(has_tls),
 ) -> supervision.ChildSpecification(Listener) {
   supervision.worker(fn() { start(builder) })
 }
@@ -221,14 +229,16 @@ pub fn drain(listener: Listener, timeout: Int) -> Result(Nil, Int) {
   ffi_drain(listener.name, timeout)
 }
 
-fn listener_name(builder: Builder) -> Atom {
+fn listener_name(builder: Builder(has_tls)) -> Atom {
   case builder.name {
     Some(name) -> atom.create(name)
     None -> atom.create("roadrunner_gleam_" <> int.to_string(builder.port))
   }
 }
 
-fn listener_options(builder: Builder) -> Result(Dict(Atom, Dynamic), String) {
+fn listener_options(
+  builder: Builder(has_tls),
+) -> Result(Dict(Atom, Dynamic), String) {
   use ip <- try_ip(builder.ip)
   use protocols <- try_protocols(builder)
   let ip = case ip {
@@ -274,8 +284,9 @@ fn try_ip(
   }
 }
 
+// TODO: I think this could be represented with phantom types as well
 fn try_protocols(
-  builder: Builder,
+  builder: Builder(has_tls),
   next: fn(List(String)) -> Result(a, String),
 ) -> Result(a, String) {
   case builder.tls, builder.http3 {

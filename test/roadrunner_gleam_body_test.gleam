@@ -13,7 +13,11 @@ import roadrunner_gleam/response.{type Response}
 
 // --- helpers --------------------------------------------------------
 
-fn serve(builder: Builder, name: String, test_body: fn(Int) -> a) -> a {
+fn serve(
+  builder: Builder(has_tls),
+  name: String,
+  test_body: fn(Int) -> a,
+) -> a {
   let assert Ok(actor.Started(data: listener, ..)) =
     builder
     |> roadrunner_gleam.port(0)
@@ -92,7 +96,9 @@ fn to_string(data: BitArray) -> String {
   text
 }
 
-fn on_demand(handler: fn(Request) -> Response) -> Builder {
+fn on_demand(
+  handler: fn(Request) -> Response,
+) -> Builder(roadrunner_gleam.WithoutTls) {
   roadrunner_gleam.new(handler) |> roadrunner_gleam.read_body_on_demand
 }
 

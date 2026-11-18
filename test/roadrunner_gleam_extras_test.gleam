@@ -14,7 +14,11 @@ import roadrunner_gleam/response
 
 // --- helpers --------------------------------------------------------
 
-fn serve(builder: Builder, name: String, test_body: fn(Int) -> a) -> a {
+fn serve(
+  builder: Builder(has_tls),
+  name: String,
+  test_body: fn(Int) -> a,
+) -> a {
   let assert Ok(actor.Started(data: listener, ..)) =
     builder
     |> roadrunner_gleam.port(0)
@@ -169,7 +173,7 @@ pub fn stop_twice_test() {
 
 /// Two pipelined requests on one connection: `/alloc` grows the heap, then
 /// `/report` answers with the `min_heap_size` the connection runs at.
-fn floor_after_alloc(builder: Builder, name: String) -> Int {
+fn floor_after_alloc(builder: Builder(has_tls), name: String) -> Int {
   use port <- serve(builder, name)
   let response =
     raw_request(port, <<

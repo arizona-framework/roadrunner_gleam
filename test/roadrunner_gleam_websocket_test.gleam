@@ -273,7 +273,8 @@ fn ws_closed(socket: Socket) -> Bool
 /// message and one that reads the next text frame.
 fn heap_session(
   name: String,
-  listener: fn(roadrunner_gleam.Builder) -> roadrunner_gleam.Builder,
+  listener: fn(roadrunner_gleam.Builder(roadrunner_gleam.WithoutTls)) ->
+    roadrunner_gleam.Builder(has_tls),
   configure: fn(websocket.Builder(Nil, String)) ->
     websocket.Builder(Nil, String),
 ) -> Int {
